@@ -1,5 +1,5 @@
 [package]
-name = "malachite-x86-fft-check"
+name = "mithqalite-x86-fft-check"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -9,8 +9,8 @@ publish = false
 [workspace]
 
 [dependencies]
-malachite-base = { path = "../malachite-base" }
-malachite-nz = { path = "../malachite-nz" }
+mithqalite-base = { path = "../mithqalite-base" }
+mithqalite-nz = { path = "../mithqalite-nz" }
 
 [profile.release]
 lto = true

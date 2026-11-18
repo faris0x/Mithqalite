@@ -38,9 +38,9 @@ rm -rf "$DOCTESTS"
 echo "Running Clippy"
 # The feature and target flags per crate match build.sh and additional-lints.sh.
 case "$(basename "$P")" in
-    malachite-base | malachite-nz | malachite-q | malachite-float)
+    mithqalite-base | mithqalite-nz | mithqalite-q | mithqalite-float)
         (cd "$P" && cargo clippy --all-targets --features bin_build -- -D warnings) ;;
-    malachite-criterion-bench)
+    mithqalite-criterion-bench)
         (cd "$P" && cargo clippy -- -D warnings) ;;
     *)
         (cd "$P" && cargo clippy --all-targets -- -D warnings) ;;

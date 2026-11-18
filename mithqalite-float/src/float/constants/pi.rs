@@ -1,0 +1,213 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the GNU MPFR Library.
+//
+//      Copyright 1999-2024 Free Software Foundation, Inc.
+//
+//      Contributed by the AriC and Caramba projects, INRIA.
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use super::cache::ConstantCache;
+use crate::Float;
+use core::cmp::Ordering;
+use mithqalite_base::num::arithmetic::traits::{Sqrt, Square};
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::num::conversion::traits::ExactFrom;
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_nz::natural::arithmetic::float::round::float_can_round;
+use mithqalite_nz::platform::Limb;
+#[cfg(feature = "test_build")]
+use std::sync::{Mutex, PoisonError};
+
+// Test builds only: the extreme trig tests each need pi to about 2^30 bits (several minutes per
+// computation), both directly and inside argument reduction. This cache keeps the most accurate
+// unrounded approximation computed so far, along with the number of its bits known to be correct,
+// and answers any later request that the approximation can provably round, using the same
+// `float_can_round` test as a fresh computation. Small precisions bypass it, so pi's own tests and
+// the property tests exercise the real computation.
+#[cfg(feature = "test_build")]
+const PI_CACHE_MIN_PREC: u64 = 1 << 20;
+
+#[cfg(feature = "test_build")]
+static PI_CACHE: Mutex<Option<(Float, u64)>> = Mutex::new(None);
+
+static PI_CONST_CACHE: ConstantCache = ConstantCache::new();
+
+#[cfg(feature = "test_build")]
+fn pi_from_cache(prec: u64, rm: RoundingMode) -> Option<(Float, Ordering)> {
+    let cache = PI_CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    let (pi, err_prec) = cache.as_ref()?;
+    float_can_round(pi.significand_ref().unwrap(), *err_prec, prec, rm)
+        .then(|| Float::from_float_prec_round_ref(pi, prec, rm))
+}
+
+#[cfg(feature = "test_build")]
+fn pi_to_cache(pi: &Float, err_prec: u64) {
+    let mut cache = PI_CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    if cache
+        .as_ref()
+        .is_none_or(|&(_, cached_err_prec)| cached_err_prec < err_prec)
+    {
+        *cache = Some((pi.clone(), err_prec));
+    }
+}
+
+impl Float {
+    /// Returns an approximation of $\pi$, with the given precision and rounded using the given
+    /// [`RoundingMode`]. An [`Ordering`] is also returned, indicating whether the rounded value is
+    /// less than or greater than the exact value of the constant. (Since the constant is
+    /// irrational, the rounded value is never equal to the exact value.)
+    ///
+    /// $$
+    /// x = \pi+\varepsilon.
+    /// $$
+    /// - If $m$ is not `Nearest`, then $|\varepsilon| < 2^{-p+2}$.
+    /// - If $m$ is `Nearest`, then $|\varepsilon| < 2^{-p+1}$.
+    ///
+    /// The constant is irrational and transcendental.
+    ///
+    /// The output has precision `prec`.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `prec`: the iteration holds a
+    /// bounded number of working-precision values at a time (freeing each round's temporaries), so
+    /// the peak is the internal memory of a single full-precision multiplication.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero or if `rm` is `Exact`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (pi, o) = Float::pi_prec_round(100, Floor);
+    /// assert_eq!(pi.to_string(), "3.1415926535897932384626433832793");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (pi, o) = Float::pi_prec_round(100, Ceiling);
+    /// assert_eq!(pi.to_string(), "3.1415926535897932384626433832825");
+    /// assert_eq!(o, Greater);
+    /// ```
+    ///
+    // This is mpfr_const_pi_internal from const_pi.c, MPFR 4.2.0.
+    #[inline]
+    pub fn pi_prec_round(prec: u64, rm: RoundingMode) -> (Self, Ordering) {
+        if let Some(result) = PI_CONST_CACHE.get(prec, rm) {
+            return result;
+        }
+        #[cfg(feature = "test_build")]
+        if prec >= PI_CACHE_MIN_PREC
+            && let Some(result) = pi_from_cache(prec, rm)
+        {
+            return result;
+        }
+        // we need 9 * 2 ^ kmax - 4 >= px + 2 * kmax + 8
+        let mut kmax = 2;
+        while ((prec + (kmax << 1) + 12) / 9) >> kmax != 0 {
+            kmax += 1;
+        }
+        // guarantees no recomputation for px <= 10000
+        let mut working_prec = prec + 3 * kmax + 14;
+        let mut increment = Limb::WIDTH;
+        loop {
+            let mut a = Self::one_prec(working_prec);
+            let mut big_a = a.clone();
+            let mut big_b = Self::one_half_prec(working_prec);
+            let mut big_d = Self::one_prec(working_prec) >> 2u32;
+            let mut k = 0;
+            loop {
+                let s = (&big_a + &big_b) >> 2u32;
+                a = (a + big_b.sqrt()) >> 1u32;
+                big_a = (&a).square();
+                big_b = (&big_a - s) << 1u32;
+                let mut s = &big_a - &big_b;
+                assert!(s < 1u32);
+                let ip = i64::exact_from(working_prec);
+                let cancel = if s == 0u32 {
+                    ip
+                } else {
+                    i64::from(-s.get_exponent().unwrap())
+                };
+                s <<= k;
+                big_d -= s;
+                // stop when |A_k - B_k| <= 2 ^ (k - p) i.e. cancel >= p - k
+                if cancel >= ip - i64::exact_from(k) {
+                    break;
+                }
+                k += 1;
+            }
+            let pi: Self = big_b / big_d;
+            let err_prec = working_prec - (k << 1) - 8;
+            if float_can_round(pi.significand_ref().unwrap(), err_prec, prec, rm) {
+                #[cfg(feature = "test_build")]
+                if prec >= PI_CACHE_MIN_PREC {
+                    pi_to_cache(&pi, err_prec);
+                }
+                let result = Self::from_float_prec_round(pi, prec, rm);
+                PI_CONST_CACHE.put(prec, rm, result.0.clone(), result.1);
+                return result;
+            }
+            working_prec += kmax + increment;
+            increment = working_prec >> 1;
+        }
+    }
+
+    /// Returns an approximation of $\pi$, with the given precision and rounded to the nearest
+    /// [`Float`] of that precision. An [`Ordering`] is also returned, indicating whether the
+    /// rounded value is less than or greater than the exact value of the constant. (Since the
+    /// constant is irrational, the rounded value is never equal to the exact value.)
+    ///
+    /// $$
+    /// x = \pi+\varepsilon.
+    /// $$
+    /// - $|\varepsilon| < 2^{-p+1}$.
+    ///
+    /// The constant is irrational and transcendental.
+    ///
+    /// The output has precision `prec`.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `prec`: the iteration holds a
+    /// bounded number of working-precision values at a time (freeing each round's temporaries), so
+    /// the peak is the internal memory of a single full-precision multiplication.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (pi, o) = Float::pi_prec(1);
+    /// assert_eq!(pi.to_string(), "4.0");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (pi, o) = Float::pi_prec(10);
+    /// assert_eq!(pi.to_string(), "3.1406");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (pi, o) = Float::pi_prec(100);
+    /// assert_eq!(pi.to_string(), "3.1415926535897932384626433832793");
+    /// assert_eq!(o, Less);
+    /// ```
+    #[inline]
+    pub fn pi_prec(prec: u64) -> (Self, Ordering) {
+        Self::pi_prec_round(prec, Nearest)
+    }
+}

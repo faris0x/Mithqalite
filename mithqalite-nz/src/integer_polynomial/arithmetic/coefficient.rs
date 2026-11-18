@@ -1,0 +1,355 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::integer::Integer;
+use crate::integer_vector::arithmetic::scalar_mul::{
+    integers_mul_scalar_assign, integers_mul_scalar_to_out,
+};
+use crate::integer_vector::modular::multi_mod::integers_multi_mod;
+use crate::natural::InnerNatural::Small;
+use crate::natural::{LIMB_MAX_QUARTER, Natural, WIDTH_MINUS_2};
+use crate::natural_vector::modular::multi_mod::naturals_multi_mod;
+use crate::platform::{Limb, SignedDoubleLimb, SignedLimb};
+use alloc::borrow::Cow;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::ops::{AddAssign, MulAssign, SubAssign};
+use mithqalite_base::num::arithmetic::traits::{
+    AddMul, AddMulAssign, DivExactAssign, Pow, Square, SubMulAssign,
+};
+use mithqalite_base::num::basic::traits::{One, Zero};
+use mithqalite_base::num::conversion::traits::{ExactFrom, WrappingFrom};
+
+crate_test_trait! {
+// The coefficients of the polynomials that the multiplication kernels work with: `Integer`s, for
+// `IntegerPolynomial`s, and `Natural`s, for `NaturalPolynomial`s. The kernels are FLINT's, which
+// work with signed coefficients; a coefficient is read as a sign and an absolute value, and the
+// results are built from them. For `Natural`s the sign is always non-negative, so after
+// monomorphization the sign handling reduces to FLINT's paths for non-negative coefficients.
+PolynomialCoefficient:
+    Clone
+    + Debug
+    + Default
+    + Zero
+    + One
+    + Eq
+    + From<u64>
+    + for<'a> AddAssign<&'a Self>
+    + for<'a> SubAssign<&'a Self>
+    + for<'a> MulAssign<&'a Self>
+    + for<'a> DivExactAssign<&'a Self>
+    + for<'a> AddMul<&'a Self, &'a Self, Output = Self>
+    + for<'a> AddMulAssign<&'a Self, &'a Self>
+    + for<'a> SubMulAssign<&'a Self, &'a Self>
+    + ExactFrom<SignedLimb>
+    + ExactFrom<SignedDoubleLimb>
+{
+    // Whether the coefficient is zero. Comparing with `Self::ZERO` instead would build and drop a
+    // temporary zero, which is measurably slower in the kernels' inner loops.
+    fn is_zero(&self) -> bool;
+
+    // Whether the coefficient is negative.
+    fn is_negative(&self) -> bool;
+
+    // The absolute value of the coefficient.
+    fn unsigned_abs_ref(&self) -> &Natural;
+
+    // The coefficient with the given sign (`true` for non-negative) and absolute value. A `Natural`
+    // coefficient cannot be negative, so for `Natural`s `sign` must be `true` unless `abs` is zero.
+    fn from_sign_and_abs(sign: bool, abs: Natural) -> Self;
+
+    // Sets a coefficient to the one whose absolute value has the limbs `xs`, in ascending order,
+    // and which is negative unless `sign` or it is zero, reusing the coefficient's limb vector when
+    // it has one. A `Natural` coefficient cannot be negative.
+    fn assign_sign_and_limbs(&mut self, sign: bool, xs: &[Limb]);
+
+    // The negative of a coefficient. A `Natural` coefficient cannot be negative, so for `Natural`s
+    // the coefficient must be zero.
+    fn negate(self) -> Self;
+
+    // Doubles a coefficient in place.
+    fn double_assign(&mut self);
+
+    // The sum of two coefficients.
+    fn add_ref(&self, other: &Self) -> Self;
+
+    // The product of two coefficients.
+    fn mul_ref(&self, other: &Self) -> Self;
+
+    // The square of a coefficient.
+    fn square_ref(&self) -> Self;
+
+    // The coefficient raised to the power `e`.
+    fn pow_ref(&self, e: u64) -> Self;
+
+    // Sets `out` to the first `out.len()` elements of `xs`, each multiplied by `c`.
+    fn vec_mul_scalar_to_out(out: &mut [Self], xs: &[Self], c: &Self);
+
+    // Multiplies each element of `xs` by `c`.
+    fn vec_mul_scalar_assign(xs: &mut [Self], c: &Self);
+
+    // The coefficients as `Integer`s, for algorithms whose intermediate values may be negative:
+    // borrowed for `Integer`s, and copied for `Natural`s.
+    fn as_integers(xs: &[Self]) -> Cow<'_, [Integer]>;
+
+    // Coefficients from the results of such an algorithm, which must be non-negative for
+    // `Natural`s.
+    fn from_integers(xs: Vec<Integer>) -> Vec<Self>;
+
+    // Coefficients from `Natural`s.
+    fn from_naturals(xs: Vec<Natural>) -> Vec<Self>;
+
+    // The residues of the coefficients modulo each of `moduli`, one `Vec` per modulus.
+    fn vec_multi_mod(xs: &[Self], moduli: &[Limb]) -> Vec<Vec<Limb>>;
+}}
+
+impl PolynomialCoefficient for Integer {
+    #[inline]
+    fn is_zero(&self) -> bool {
+        *self == 0u32
+    }
+
+    #[inline]
+    fn is_negative(&self) -> bool {
+        !self.sign
+    }
+
+    #[inline]
+    fn unsigned_abs_ref(&self) -> &Natural {
+        &self.abs
+    }
+
+    #[inline]
+    fn from_sign_and_abs(sign: bool, abs: Natural) -> Self {
+        Self::from_sign_and_abs(sign, abs)
+    }
+
+    fn assign_sign_and_limbs(&mut self, sign: bool, xs: &[Limb]) {
+        self.abs.assign_limbs_asc(xs);
+        self.sign = sign || self.abs == 0u32;
+    }
+
+    #[inline]
+    fn negate(self) -> Self {
+        -self
+    }
+
+    #[inline]
+    fn double_assign(&mut self) {
+        *self <<= 1u32;
+    }
+
+    #[inline]
+    fn add_ref(&self, other: &Self) -> Self {
+        self + other
+    }
+
+    #[inline]
+    fn mul_ref(&self, other: &Self) -> Self {
+        self * other
+    }
+
+    #[inline]
+    fn square_ref(&self) -> Self {
+        self.square()
+    }
+
+    #[inline]
+    fn pow_ref(&self, e: u64) -> Self {
+        self.pow(e)
+    }
+
+    #[inline]
+    fn vec_mul_scalar_to_out(out: &mut [Self], xs: &[Self], c: &Self) {
+        integers_mul_scalar_to_out(out, xs, c);
+    }
+
+    #[inline]
+    fn vec_mul_scalar_assign(xs: &mut [Self], c: &Self) {
+        integers_mul_scalar_assign(xs, c);
+    }
+
+    #[inline]
+    fn as_integers(xs: &[Self]) -> Cow<'_, [Integer]> {
+        Cow::Borrowed(xs)
+    }
+
+    #[inline]
+    fn from_integers(xs: Vec<Integer>) -> Vec<Self> {
+        xs
+    }
+
+    #[inline]
+    fn from_naturals(xs: Vec<Natural>) -> Vec<Self> {
+        xs.into_iter().map(Self::from).collect()
+    }
+
+    #[inline]
+    fn vec_multi_mod(xs: &[Self], moduli: &[Limb]) -> Vec<Vec<Limb>> {
+        integers_multi_mod(xs, moduli)
+    }
+}
+
+impl PolynomialCoefficient for Natural {
+    #[inline]
+    fn is_zero(&self) -> bool {
+        *self == 0u32
+    }
+
+    #[inline]
+    fn is_negative(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    fn unsigned_abs_ref(&self) -> &Natural {
+        self
+    }
+
+    #[inline]
+    fn from_sign_and_abs(sign: bool, abs: Natural) -> Self {
+        assert!(
+            sign || abs == 0u32,
+            "a Natural coefficient cannot be negative"
+        );
+        abs
+    }
+
+    fn assign_sign_and_limbs(&mut self, sign: bool, xs: &[Limb]) {
+        self.assign_limbs_asc(xs);
+        assert!(
+            sign || *self == 0u32,
+            "a Natural coefficient cannot be negative"
+        );
+    }
+
+    #[inline]
+    fn negate(self) -> Self {
+        assert_eq!(self, 0u32, "a Natural coefficient cannot be negative");
+        self
+    }
+
+    #[inline]
+    fn double_assign(&mut self) {
+        *self <<= 1u32;
+    }
+
+    #[inline]
+    fn add_ref(&self, other: &Self) -> Self {
+        self + other
+    }
+
+    #[inline]
+    fn mul_ref(&self, other: &Self) -> Self {
+        self * other
+    }
+
+    #[inline]
+    fn square_ref(&self) -> Self {
+        self.square()
+    }
+
+    #[inline]
+    fn pow_ref(&self, e: u64) -> Self {
+        self.pow(e)
+    }
+
+    fn vec_mul_scalar_to_out(out: &mut [Self], xs: &[Self], c: &Self) {
+        let xs = &xs[..out.len()];
+        match *c {
+            Self(Small(0)) => out.fill(Self::ZERO),
+            Self(Small(1)) => out.clone_from_slice(xs),
+            _ => {
+                for (o, x) in out.iter_mut().zip(xs) {
+                    *o = x * c;
+                }
+            }
+        }
+    }
+
+    fn vec_mul_scalar_assign(xs: &mut [Self], c: &Self) {
+        match *c {
+            Self(Small(0)) => xs.fill(Self::ZERO),
+            Self(Small(1)) => {}
+            _ => {
+                for x in xs {
+                    *x *= c;
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn as_integers(xs: &[Self]) -> Cow<'_, [Integer]> {
+        Cow::Owned(xs.iter().map(Integer::from).collect())
+    }
+
+    #[inline]
+    fn from_integers(xs: Vec<Integer>) -> Vec<Self> {
+        xs.into_iter().map(Self::exact_from).collect()
+    }
+
+    #[inline]
+    fn from_naturals(xs: Vec<Natural>) -> Vec<Self> {
+        xs
+    }
+
+    #[inline]
+    fn vec_multi_mod(xs: &[Self], moduli: &[Limb]) -> Vec<Vec<Limb>> {
+        naturals_multi_mod(xs, moduli)
+    }
+}
+
+// Removes the zeros at the end of `xs`, the coefficients of a polynomial, so that its last element,
+// if any, is nonzero.
+pub(crate) fn trim_coefficients<C: PolynomialCoefficient>(xs: &mut Vec<C>) {
+    while xs.last().is_some_and(PolynomialCoefficient::is_zero) {
+        xs.pop();
+    }
+}
+
+// Keeps only the first `len` of `xs`, the coefficients of a polynomial without zeros at the end,
+// and then trims the result.
+pub(crate) fn truncate_coefficients<C: PolynomialCoefficient>(xs: &mut Vec<C>, len: u64) {
+    if let Ok(len) = usize::try_from(len)
+        && len < xs.len()
+    {
+        xs.truncate(len);
+        trim_coefficients(xs);
+    }
+}
+
+// The largest absolute value of a small FLINT `fmpz`, which is stored in a single word with two
+// bits to spare; larger values are stored as GMP integers. Some of FLINT's algorithms take a fast
+// path for small values that depends on the spare bits, so a faithful translation takes it for the
+// same values.
+pub(crate) const COEFF_MAX: Limb = LIMB_MAX_QUARTER;
+
+// The largest number of bits that FLINT stores in a small `fmpz`: `SMALL_FMPZ_BITCOUNT_MAX` from
+// `flint.h`, FLINT 3.6.0.
+pub(crate) const SMALL_FMPZ_BITCOUNT_MAX: u64 = WIDTH_MINUS_2;
+
+// The value of `x` as a signed word, if FLINT would store `x` as a small `fmpz`; that is, if
+// `COEFF_IS_MPZ` from `flint.h`, FLINT 3.6.0, would be false.
+pub(crate) fn small_value<C: PolynomialCoefficient>(x: &C) -> Option<SignedLimb> {
+    match *x.unsigned_abs_ref() {
+        Natural(Small(small)) if small <= COEFF_MAX => {
+            let value = SignedLimb::wrapping_from(small);
+            Some(if x.is_negative() { -value } else { value })
+        }
+        _ => None,
+    }
+}
+
+// The values of the elements of `xs`, each of which FLINT must store as a small `fmpz`, as signed
+// words or as a wider signed type.
+pub(crate) fn small_values<T: From<SignedLimb>, C: PolynomialCoefficient>(xs: &[C]) -> Vec<T> {
+    xs.iter()
+        .map(|x| T::from(small_value(x).unwrap()))
+        .collect()
+}

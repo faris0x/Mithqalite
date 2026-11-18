@@ -1965,7 +1965,7 @@ const AZURITE_MOD_STAGES: &[(&str, &str)] = &[
     ("demo_natural_eq_mod_ref_ref_ref", "az_zmod_eq"),
 ];
 
-// The Rational demos (in malachite-q) checked against Azurite's `AzRat`, with the oracle mode that
+// The Rational demos (in mithqalite-q) checked against Azurite's `AzRat`, with the oracle mode that
 // reads each one. The modes follow the rows of the "Malachite for Azurite Users: Rationals" mapping
 // page; `rounding_from` is an Integer demo whose input is a Rational.
 const AZURITE_RATIONAL_STAGES: &[(&str, &str)] = &[
@@ -2216,7 +2216,7 @@ const AZURITE_RATIONAL_STAGES_NO_SPECIAL: &[(&str, &str)] = &[
     ),
 ];
 
-// The Float demos (in malachite-float) checked against Azurite's `AzFloat`, with the oracle mode
+// The Float demos (in mithqalite-float) checked against Azurite's `AzFloat`, with the oracle mode
 // that reads each one. Only the `_debug` demos are listed, which print every value in the exact
 // hexadecimal format with its precision; the `_extreme` ones exercise the exponent-range emulation
 // in Azurite's `MalachiteFloat` module. The modes follow the rows of the "Malachite for Azurite
@@ -7602,19 +7602,19 @@ fn test_against_azurite() {
     let oracle = build_azurite_oracle();
     test_azurite_units(&oracle);
     for (demo, mode) in AZURITE_NATURAL_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-nz", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-nz", demo, mode);
     }
     for (demo, mode) in AZURITE_NATURAL_STAGES_NO_SPECIAL {
-        check_demo_against_azurite_in_modes(&oracle, "../malachite-nz", demo, mode, &MODES[..2]);
+        check_demo_against_azurite_in_modes(&oracle, "../mithqalite-nz", demo, mode, &MODES[..2]);
     }
     for (demo, mode) in AZURITE_INTEGER_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-nz", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-nz", demo, mode);
     }
     for (demo, mode) in AZURITE_INTEGER_STAGES_NO_SPECIAL {
-        check_demo_against_azurite_in_modes(&oracle, "../malachite-nz", demo, mode, &MODES[..2]);
+        check_demo_against_azurite_in_modes(&oracle, "../mithqalite-nz", demo, mode, &MODES[..2]);
     }
     for (demo, mode) in AZURITE_MOD_POWER_OF_2_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-nz", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-nz", demo, mode);
     }
     // The primitive unsigned mod_power_of_2_sqrt, read by the same mode as the Natural one.
     for demo in [
@@ -7625,33 +7625,33 @@ fn test_against_azurite() {
         "demo_mod_power_of_2_sqrt_u128",
         "demo_mod_power_of_2_sqrt_usize",
     ] {
-        check_demo_against_azurite(&oracle, "../malachite-base", demo, "az_zmod_pow2_sqrt");
+        check_demo_against_azurite(&oracle, "../mithqalite-base", demo, "az_zmod_pow2_sqrt");
     }
     for (demo, mode) in AZURITE_UNSIGNED_VECTOR_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-base", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-base", demo, mode);
     }
     for (demo, mode) in AZURITE_UNSIGNED_VECTOR_STAGES_NO_SPECIAL {
-        check_demo_against_azurite_in_modes(&oracle, "../malachite-base", demo, mode, &MODES[..2]);
+        check_demo_against_azurite_in_modes(&oracle, "../mithqalite-base", demo, mode, &MODES[..2]);
     }
     for (demo, mode) in AZURITE_MOD_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-nz", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-nz", demo, mode);
     }
     for (demo, mode) in AZURITE_RATIONAL_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-q", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-q", demo, mode);
     }
     for (demo, mode) in AZURITE_RATIONAL_STAGES_NO_SPECIAL {
-        check_demo_against_azurite_in_modes(&oracle, "../malachite-q", demo, mode, &MODES[..2]);
+        check_demo_against_azurite_in_modes(&oracle, "../mithqalite-q", demo, mode, &MODES[..2]);
     }
     for (demo, mode) in AZURITE_FLOAT_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-float", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-float", demo, mode);
     }
     for (demo, mode) in AZURITE_FLOAT_STAGES_NO_SPECIAL {
-        check_demo_against_azurite_in_modes(&oracle, "../malachite-float", demo, mode, &MODES[..2]);
+        check_demo_against_azurite_in_modes(&oracle, "../mithqalite-float", demo, mode, &MODES[..2]);
     }
     for (demo, mode) in AZURITE_FLOAT_STAGES_SLOW {
         check_demo_against_azurite_with_limit(
             &oracle,
-            "../malachite-float",
+            "../mithqalite-float",
             demo,
             mode,
             &MODES,
@@ -7659,10 +7659,10 @@ fn test_against_azurite() {
         );
     }
     for (demo, mode) in AZURITE_BIG_EXPONENT_FLOAT_STAGES {
-        check_demo_against_azurite(&oracle, "../malachite-float", demo, mode);
+        check_demo_against_azurite(&oracle, "../mithqalite-float", demo, mode);
     }
     for (demo, mode) in AZURITE_BIG_EXPONENT_FLOAT_STAGES_NO_SPECIAL {
-        check_demo_against_azurite_in_modes(&oracle, "../malachite-float", demo, mode, &MODES[..2]);
+        check_demo_against_azurite_in_modes(&oracle, "../mithqalite-float", demo, mode, &MODES[..2]);
     }
 }
 
@@ -7698,80 +7698,80 @@ fn test_against_flint() {
 
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_mod_sqrt",
         "fmpz_sqrtmod",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-base",
+        "../mithqalite-base",
         "demo_mod_sqrt_u64",
         "n_sqrtmod",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_mod_div",
         "fmpz_mod_divides",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-base",
+        "../mithqalite-base",
         "demo_mod_div_u64",
         "fmpz_mod_divides",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_mod_div_list",
         "fmpz_divides_mod_list",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-base",
+        "../mithqalite-base",
         "demo_mod_div_list_u64",
         "fmpz_divides_mod_list",
     );
-    check_demo_against_flint(&oracle, "../malachite-nz", "demo_natural_crt", "fmpz_CRT");
-    check_demo_against_flint(&oracle, "../malachite-base", "demo_crt_u64", "fmpz_CRT");
+    check_demo_against_flint(&oracle, "../mithqalite-nz", "demo_natural_crt", "fmpz_CRT");
+    check_demo_against_flint(&oracle, "../mithqalite-base", "demo_crt_u64", "fmpz_CRT");
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_balanced_crt",
         "fmpz_CRT_balanced",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_multi_crt",
         "fmpz_multi_CRT",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_multi_balanced_crt",
         "fmpz_multi_CRT_balanced",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_crt_comb_reduce",
         "fmpz_multi_mod_ui",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_crt_comb_combine",
         "fmpz_multi_CRT_ui",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_crt_comb_combine_balanced",
         "fmpz_multi_CRT_ui_balanced",
     );
     // The generated cases from multi_crt_properties and multi_balanced_crt_properties in
-    // malachite-nz's NaturalVector and IntegerVector tests: residues of vectors modulo usable
+    // mithqalite-nz's NaturalVector and IntegerVector tests: residues of vectors modulo usable
     // moduli, and residues of 0 modulo arbitrary moduli, most of them unusable.
     for demo_name in [
         "demo_natural_vector_multi_crt",
@@ -7781,14 +7781,14 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_vec_multi_CRT_ui",
         );
     }
     // The generated cases from mod_entrywise_inverse_properties and
-    // mod_power_of_2_entrywise_inverse_properties in malachite-base's UnsignedVector tests and
-    // malachite-nz's NaturalVector tests: (vector, modulus or power of 2) pairs, by value and by
+    // mod_power_of_2_entrywise_inverse_properties in mithqalite-base's UnsignedVector tests and
+    // mithqalite-nz's NaturalVector tests: (vector, modulus or power of 2) pairs, by value and by
     // reference, most of them with a non-invertible element, and the same vectors with only their
     // invertible elements kept.
     for demo_name in [
@@ -7799,7 +7799,7 @@ fn test_against_flint() {
         "demo_unsigned_vector_mod_power_of_2_entrywise_inverse_ref",
         "demo_unsigned_vector_mod_power_of_2_entrywise_inverse_odd",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "_nmod_vec_invert");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "_nmod_vec_invert");
     }
     for demo_name in [
         "demo_natural_vector_mod_entrywise_inverse",
@@ -7809,10 +7809,10 @@ fn test_against_flint() {
         "demo_natural_vector_mod_power_of_2_entrywise_inverse_ref",
         "demo_natural_vector_mod_power_of_2_entrywise_inverse_odd",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "_nmod_vec_invert");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "_nmod_vec_invert");
     }
-    // The generated cases from mod_power_of_2_taylor_shift_properties in malachite-base's
-    // UnsignedPolynomial tests and malachite-nz's NaturalPolynomial tests: by value, by reference,
+    // The generated cases from mod_power_of_2_taylor_shift_properties in mithqalite-base's
+    // UnsignedPolynomial tests and mithqalite-nz's NaturalPolynomial tests: by value, by reference,
     // and in place, with long polynomials, and with shifts of at most 3.
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_taylor_shift_u8",
@@ -7825,7 +7825,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_taylor_shift",
         );
@@ -7839,12 +7839,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_taylor_shift",
         );
     }
-    // The generated cases from mod_taylor_shift_properties in malachite-nz's NaturalPolynomial
+    // The generated cases from mod_taylor_shift_properties in mithqalite-nz's NaturalPolynomial
     // tests: by value, by reference, and in place, with long polynomials, and with shifts of at
     // most 3.
     for demo_name in [
@@ -7854,9 +7854,9 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_taylor_shift_long",
         "demo_natural_polynomial_mod_taylor_shift_small_shift",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_taylor_shift");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_taylor_shift");
     }
-    // The generated cases from mod_taylor_shift_properties in malachite-base's UnsignedPolynomial
+    // The generated cases from mod_taylor_shift_properties in mithqalite-base's UnsignedPolynomial
     // tests, for u8 and u64 coefficients.
     for demo_name in [
         "demo_unsigned_polynomial_mod_taylor_shift_u8",
@@ -7867,9 +7867,9 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_mod_taylor_shift_long_u64",
         "demo_unsigned_polynomial_mod_taylor_shift_small_shift_u64",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_taylor_shift");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_taylor_shift");
     }
-    // The generated cases from compose_properties in malachite-nz's IntegerPolynomial tests: all
+    // The generated cases from compose_properties in mithqalite-nz's IntegerPolynomial tests: all
     // six forms, long polynomials, linear inner polynomials, and the Horner and divide-and-conquer
     // kernels.
     for demo_name in [
@@ -7884,9 +7884,9 @@ fn test_against_flint() {
         "demo_integer_polynomial_compose_horner",
         "demo_integer_polynomial_compose_divide_and_conquer",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_compose");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_compose");
     }
-    // The generated cases from compose_truncated_properties in malachite-nz's IntegerPolynomial and
+    // The generated cases from compose_truncated_properties in mithqalite-nz's IntegerPolynomial and
     // NaturalPolynomial tests: all six forms, and long lengths reaching all three algorithms.
     for demo_name in [
         "demo_integer_polynomial_compose_truncated",
@@ -7906,12 +7906,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_compose_series",
         );
     }
-    // The generated cases from compose_truncated_properties in malachite-q's RationalPolynomial
+    // The generated cases from compose_truncated_properties in mithqalite-q's RationalPolynomial
     // tests: all six forms, and long lengths.
     for demo_name in [
         "demo_rational_polynomial_compose_truncated",
@@ -7924,12 +7924,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo_name,
             "fmpq_poly_compose_series",
         );
     }
-    // The generated cases from compose_properties in malachite-nz's NaturalPolynomial tests: all
+    // The generated cases from compose_properties in mithqalite-nz's NaturalPolynomial tests: all
     // six forms, long polynomials, and linear inner polynomials.
     for demo_name in [
         "demo_natural_polynomial_compose",
@@ -7941,10 +7941,10 @@ fn test_against_flint() {
         "demo_natural_polynomial_compose_long",
         "demo_natural_polynomial_compose_linear",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_compose");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_compose");
     }
-    // The generated cases from mod_power_of_2_compose_properties in malachite-base's
-    // UnsignedPolynomial tests and malachite-nz's NaturalPolynomial tests: by value, by reference,
+    // The generated cases from mod_power_of_2_compose_properties in mithqalite-base's
+    // UnsignedPolynomial tests and mithqalite-nz's NaturalPolynomial tests: by value, by reference,
     // and in place.
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_compose_u8",
@@ -7954,7 +7954,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_compose",
         );
@@ -7966,12 +7966,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_compose",
         );
     }
-    // The power series composition demos of malachite-base's UnsignedPolynomial and malachite-nz's
+    // The power series composition demos of mithqalite-base's UnsignedPolynomial and mithqalite-nz's
     // NaturalPolynomial, modulo powers of 2: by value, by reference, in place, and with lengths up
     // to 1000.
     for demo_name in [
@@ -7983,7 +7983,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_compose_series",
         );
@@ -7996,13 +7996,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_compose_series",
         );
     }
     // The Euclidean division, exact division, power removal, and root division demos of
-    // malachite-nz's IntegerPolynomial.
+    // mithqalite-nz's IntegerPolynomial.
     for demo_name in [
         "demo_integer_polynomial_div_rem",
         "demo_integer_polynomial_div_rem_ref_ref",
@@ -8018,7 +8018,7 @@ fn test_against_flint() {
         "demo_integer_polynomial_rem_by_polynomial_assign",
         "demo_integer_polynomial_checked_rem",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_divrem");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_divrem");
     }
     for demo_name in [
         "demo_integer_polynomial_div_exact_by_polynomial",
@@ -8029,23 +8029,23 @@ fn test_against_flint() {
         "demo_integer_polynomial_divisible_by",
         "demo_integer_polynomial_divisible_by_ref_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_divexact");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_divexact");
     }
     for demo_name in [
         "demo_integer_polynomial_remove_power",
         "demo_integer_polynomial_remove_power_ref_ref",
         "demo_integer_polynomial_remove_power_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_remove");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_remove");
     }
     for demo_name in [
         "demo_integer_polynomial_div_root",
         "demo_integer_polynomial_div_root_ref_ref",
         "demo_integer_polynomial_div_root_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_div_root");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_div_root");
     }
-    // The pseudo-division demos of malachite-nz's IntegerPolynomial.
+    // The pseudo-division demos of mithqalite-nz's IntegerPolynomial.
     for demo_name in [
         "demo_integer_polynomial_pseudo_div_rem",
         "demo_integer_polynomial_pseudo_div_rem_ref_ref",
@@ -8057,20 +8057,20 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_pseudo_divrem",
         );
     }
-    // The power removal and root division demos of malachite-base's UnsignedPolynomial and
-    // malachite-nz's NaturalPolynomial, modulo m and modulo powers of 2.
+    // The power removal and root division demos of mithqalite-base's UnsignedPolynomial and
+    // mithqalite-nz's NaturalPolynomial, modulo m and modulo powers of 2.
     for demo_name in [
         "demo_unsigned_polynomial_mod_remove_power_u8",
         "demo_unsigned_polynomial_mod_remove_power_u64",
         "demo_unsigned_polynomial_mod_remove_power_ref_ref_u128",
         "demo_unsigned_polynomial_mod_remove_power_assign_u32",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_remove_power");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_remove_power");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_div_root_u8",
@@ -8078,7 +8078,7 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_mod_div_root_ref_u128",
         "demo_unsigned_polynomial_mod_div_root_assign_u32",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_div_root");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_div_root");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_remove_power_u8",
@@ -8088,7 +8088,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_remove_power",
         );
@@ -8101,7 +8101,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_div_root",
         );
@@ -8111,14 +8111,14 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_remove_power_ref_ref",
         "demo_natural_polynomial_mod_remove_power_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_remove_power");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_remove_power");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_div_root",
         "demo_natural_polynomial_mod_div_root_ref_ref",
         "demo_natural_polynomial_mod_div_root_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_div_root");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_div_root");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_remove_power",
@@ -8127,7 +8127,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_remove_power",
         );
@@ -8139,13 +8139,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_div_root",
         );
     }
-    // The exact division and divisibility demos of malachite-base's UnsignedPolynomial and
-    // malachite-nz's NaturalPolynomial, modulo m and modulo powers of 2.
+    // The exact division and divisibility demos of mithqalite-base's UnsignedPolynomial and
+    // mithqalite-nz's NaturalPolynomial, modulo m and modulo powers of 2.
     for demo_name in [
         "demo_unsigned_polynomial_mod_div_exact_u8",
         "demo_unsigned_polynomial_mod_div_exact_u64",
@@ -8156,7 +8156,7 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_mod_divisible_by_u16",
         "demo_unsigned_polynomial_mod_divisible_by_ref_ref_u64",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_div_exact");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_div_exact");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_div_exact_u8",
@@ -8170,7 +8170,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_div_exact",
         );
@@ -8184,7 +8184,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_divisible_by",
         "demo_natural_polynomial_mod_divisible_by_ref_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_div_exact");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_div_exact");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_div_exact",
@@ -8197,12 +8197,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_div_exact",
         );
     }
-    // The Euclidean division demos of malachite-base's UnsignedPolynomial and malachite-nz's
+    // The Euclidean division demos of mithqalite-base's UnsignedPolynomial and mithqalite-nz's
     // NaturalPolynomial, modulo m and modulo powers of 2: quotient and remainder, quotient, and
     // remainder, by value, by reference, in place, and checked.
     for demo_name in [
@@ -8227,7 +8227,7 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_mod_rem_precomputed_ref_ref_u64",
         "demo_unsigned_polynomial_mod_rem_precomputed_assign_u8",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_div_rem");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_div_rem");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_div_rem_u8",
@@ -8253,7 +8253,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_div_rem",
         );
@@ -8278,7 +8278,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_rem_precomputed_ref_ref",
         "demo_natural_polynomial_mod_rem_precomputed_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_div_rem");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_div_rem");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_div_rem",
@@ -8302,13 +8302,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_div_rem",
         );
     }
-    // The demos of multiplication modulo a polynomial of malachite-base's UnsignedPolynomial and
-    // malachite-nz's NaturalPolynomial, with coefficients modulo m and modulo powers of 2: by
+    // The demos of multiplication modulo a polynomial of mithqalite-base's UnsignedPolynomial and
+    // mithqalite-nz's NaturalPolynomial, with coefficients modulo m and modulo powers of 2: by
     // value, by reference, in place, and with precomputed data.
     for demo_name in [
         "demo_unsigned_polynomial_mod_mul_mod_polynomial_u8",
@@ -8320,7 +8320,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_mul_mod_polynomial",
         );
@@ -8335,7 +8335,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_mul_mod_polynomial",
         );
@@ -8350,7 +8350,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_mul_mod_polynomial",
         );
@@ -8365,13 +8365,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_mul_mod_polynomial",
         );
     }
-    // The demos of composition modulo a polynomial of malachite-base's UnsignedPolynomial and
-    // malachite-nz's NaturalPolynomial, with coefficients modulo m and modulo powers of 2: by
+    // The demos of composition modulo a polynomial of mithqalite-base's UnsignedPolynomial and
+    // mithqalite-nz's NaturalPolynomial, with coefficients modulo m and modulo powers of 2: by
     // value, by reference, in place, and with precomputed data.
     for demo_name in [
         "demo_unsigned_polynomial_mod_compose_mod_polynomial_u8",
@@ -8385,7 +8385,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_compose_mod_polynomial",
         );
@@ -8402,7 +8402,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_compose_mod_polynomial",
         );
@@ -8419,7 +8419,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_compose_mod_polynomial",
         );
@@ -8436,20 +8436,20 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_compose_mod_polynomial",
         );
     }
-    // The demos of series reversion of malachite-base's UnsignedPolynomial and malachite-nz's
-    // NaturalPolynomial, with coefficients modulo m and modulo powers of 2, of malachite-nz's
-    // IntegerPolynomial, and of malachite-q's RationalPolynomial: by value and by reference.
+    // The demos of series reversion of mithqalite-base's UnsignedPolynomial and mithqalite-nz's
+    // NaturalPolynomial, with coefficients modulo m and modulo powers of 2, of mithqalite-nz's
+    // IntegerPolynomial, and of mithqalite-q's RationalPolynomial: by value and by reference.
     for demo_name in [
         "demo_unsigned_polynomial_mod_compositional_inverse_truncated_u8",
         "demo_unsigned_polynomial_mod_compositional_inverse_truncated_ref_u64",
         "demo_unsigned_polynomial_mod_compositional_inverse_truncated_u128",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_revert_series");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_revert_series");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_compositional_inverse_truncated_u8",
@@ -8458,7 +8458,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_revert_series",
         );
@@ -8469,7 +8469,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_compositional_inverse_truncated_ref_val",
         "demo_natural_polynomial_mod_compositional_inverse_truncated_ref_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_revert_series");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_revert_series");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_compositional_inverse_truncated",
@@ -8477,7 +8477,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_revert_series",
         );
@@ -8488,7 +8488,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_revert_series",
         );
@@ -8499,13 +8499,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo_name,
             "fmpq_poly_revert_series",
         );
     }
-    // The demos of powering modulo a polynomial of malachite-base's UnsignedPolynomial and
-    // malachite-nz's NaturalPolynomial, with coefficients modulo m and modulo powers of 2: by
+    // The demos of powering modulo a polynomial of mithqalite-base's UnsignedPolynomial and
+    // mithqalite-nz's NaturalPolynomial, with coefficients modulo m and modulo powers of 2: by
     // value, by reference, in place, and with precomputed data.
     for demo_name in [
         "demo_unsigned_polynomial_mod_pow_mod_polynomial_u8",
@@ -8517,7 +8517,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_pow_mod_polynomial",
         );
@@ -8532,7 +8532,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_pow_mod_polynomial",
         );
@@ -8547,7 +8547,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_pow_mod_polynomial",
         );
@@ -8562,12 +8562,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_pow_mod_polynomial",
         );
     }
-    // The power series division demos of malachite-base's UnsignedPolynomial and malachite-nz's
+    // The power series division demos of mithqalite-base's UnsignedPolynomial and mithqalite-nz's
     // NaturalPolynomial, modulo m and modulo powers of 2: by value, by reference, in place,
     // checked, and with lengths up to 1000.
     for demo_name in [
@@ -8579,7 +8579,7 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_checked_mod_div_truncated_ref_ref_u64",
         "demo_unsigned_polynomial_mod_div_truncated_long_u64",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_div_series");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_div_series");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_div_truncated_u8",
@@ -8592,7 +8592,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_div_series",
         );
@@ -8605,7 +8605,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_checked_mod_div_truncated_ref_ref",
         "demo_natural_polynomial_mod_div_truncated_long",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_div_series");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_div_series");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_div_truncated",
@@ -8617,12 +8617,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_div_series",
         );
     }
-    // The power series inversion demos of malachite-base's UnsignedPolynomial and malachite-nz's
+    // The power series inversion demos of mithqalite-base's UnsignedPolynomial and mithqalite-nz's
     // NaturalPolynomial, modulo m and modulo powers of 2: by value, by reference, and with lengths
     // up to 1000.
     for demo_name in [
@@ -8633,7 +8633,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_inverse_series",
         );
@@ -8646,7 +8646,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_inverse_series",
         );
@@ -8657,7 +8657,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_inverse_truncated_ref_ref",
         "demo_natural_polynomial_mod_inverse_truncated_long",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_inverse_series");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_inverse_series");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_inverse_truncated",
@@ -8666,12 +8666,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_inverse_series",
         );
     }
-    // The power series composition demos of malachite-base's UnsignedPolynomial and malachite-nz's
+    // The power series composition demos of mithqalite-base's UnsignedPolynomial and mithqalite-nz's
     // NaturalPolynomial, modulo m: by value, by reference, in place, and with lengths up to 1000.
     for demo_name in [
         "demo_unsigned_polynomial_mod_compose_truncated_u8",
@@ -8682,7 +8682,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_compose_series",
         );
@@ -8694,24 +8694,24 @@ fn test_against_flint() {
         "demo_natural_polynomial_mod_compose_truncated_assign_ref",
         "demo_natural_polynomial_mod_compose_truncated_long",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_compose_series");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_compose_series");
     }
-    // The generated cases from mod_compose_properties in malachite-base's UnsignedPolynomial tests
-    // and malachite-nz's NaturalPolynomial tests: by value, by reference, and in place.
+    // The generated cases from mod_compose_properties in mithqalite-base's UnsignedPolynomial tests
+    // and mithqalite-nz's NaturalPolynomial tests: by value, by reference, and in place.
     for demo_name in [
         "demo_unsigned_polynomial_mod_compose_u8",
         "demo_unsigned_polynomial_mod_compose_u64",
         "demo_unsigned_polynomial_mod_compose_ref_u64",
         "demo_unsigned_polynomial_mod_compose_assign_u64",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_compose");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_compose");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_compose",
         "demo_natural_polynomial_mod_compose_ref",
         "demo_natural_polynomial_mod_compose_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_compose");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_compose");
     }
     // Multipoint evaluation, plain and with precomputed subproduct trees, modulo m and modulo 2^k,
     // against fmpz_mod_poly_evaluate_fmpz_vec and nmod_poly_evaluate_nmod_vec_fast.
@@ -8721,14 +8721,14 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_mod_evaluate_many_precomputed_u64",
         "demo_unsigned_polynomial_mod_evaluate_many_precomputed_ref_u64",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_evaluate_many");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_evaluate_many");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_evaluate_many",
         "demo_natural_polynomial_mod_evaluate_many_precomputed",
         "demo_natural_polynomial_mod_evaluate_many_precomputed_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_evaluate_many");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_evaluate_many");
     }
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_evaluate_many_u8",
@@ -8738,7 +8738,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_evaluate_many",
         );
@@ -8750,7 +8750,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "mod_power_of_2_evaluate_many",
         );
@@ -8765,18 +8765,18 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_mod_power_of_2_from_roots_u8",
         "demo_unsigned_polynomial_mod_power_of_2_from_roots_u64",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_from_roots");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_from_roots");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_from_roots",
         "demo_natural_polynomial_mod_from_roots_ref",
         "demo_natural_polynomial_mod_power_of_2_from_roots",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_from_roots");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_from_roots");
     }
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_polynomial_from_roots",
         "from_roots",
     );
@@ -8784,7 +8784,7 @@ fn test_against_flint() {
         "demo_integer_polynomial_from_rational_roots",
         "demo_rational_polynomial_from_roots",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, "from_roots");
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, "from_roots");
     }
     // GCDs, extended GCDs, and LCMs modulo m and modulo 2^k, against fmpz_mod_poly's Euclidean
     // functions, which report non-invertible leading coefficients as Malachite's checked functions
@@ -8812,7 +8812,7 @@ fn test_against_flint() {
         "demo_unsigned_polynomial_checked_mod_lcm_u64",
         "demo_unsigned_polynomial_checked_mod_lcm_ref_ref_u128",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "mod_gcd");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "mod_gcd");
     }
     for demo_name in [
         "demo_natural_polynomial_mod_gcd",
@@ -8830,7 +8830,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_checked_mod_lcm",
         "demo_natural_polynomial_checked_mod_lcm_ref_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_gcd");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_gcd");
     }
     for demo_name in [
         "demo_unsigned_polynomial_checked_mod_power_of_2_gcd_u8",
@@ -8845,7 +8845,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "mod_power_of_2_gcd",
         );
@@ -8858,7 +8858,7 @@ fn test_against_flint() {
         "demo_natural_polynomial_checked_mod_power_of_2_lcm",
         "demo_natural_polynomial_checked_mod_power_of_2_lcm_ref_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "mod_power_of_2_gcd");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "mod_power_of_2_gcd");
     }
     // GCDs and LCMs over the integers, against fmpz_poly_gcd and fmpz_poly_lcm, and GCDs, extended
     // GCDs, and LCMs over the rationals, against fmpq_poly_gcd, fmpq_poly_xgcd, and fmpq_poly_lcm.
@@ -8870,7 +8870,7 @@ fn test_against_flint() {
         "demo_integer_polynomial_lcm_ref_ref",
         "demo_integer_polynomial_lcm_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "polynomial_gcd");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "polynomial_gcd");
     }
     for demo_name in [
         "demo_rational_polynomial_gcd",
@@ -8884,12 +8884,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo_name,
             "rational_polynomial_gcd",
         );
     }
-    // The generated cases from compose_properties in malachite-q's RationalPolynomial tests: all
+    // The generated cases from compose_properties in mithqalite-q's RationalPolynomial tests: all
     // six forms, long polynomials, and linear inner polynomials.
     for demo_name in [
         "demo_rational_polynomial_compose",
@@ -8901,9 +8901,9 @@ fn test_against_flint() {
         "demo_rational_polynomial_compose_long",
         "demo_rational_polynomial_compose_linear",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, "fmpq_poly_compose");
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, "fmpq_poly_compose");
     }
-    // The generated cases from taylor_shift_properties in malachite-q's RationalPolynomial tests:
+    // The generated cases from taylor_shift_properties in mithqalite-q's RationalPolynomial tests:
     // by value, by reference, and in place, with long polynomials, and with integer shifts.
     for demo_name in [
         "demo_rational_polynomial_taylor_shift",
@@ -8914,12 +8914,12 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo_name,
             "fmpq_poly_taylor_shift",
         );
     }
-    // The generated cases from taylor_shift_properties in malachite-nz's IntegerPolynomial and
+    // The generated cases from taylor_shift_properties in mithqalite-nz's IntegerPolynomial and
     // NaturalPolynomial tests: by value, by reference, and in place, with long polynomials, and
     // with shifts between -3 and 3, so that the special shifts 0, 1, and -1 are common.
     for demo_name in [
@@ -8936,13 +8936,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_taylor_shift",
         );
     }
     // The generated cases from mod_div_properties and mod_power_of_2_div_properties in
-    // malachite-base's UnsignedVector tests and malachite-nz's NaturalVector tests: (vector,
+    // mithqalite-base's UnsignedVector tests and mithqalite-nz's NaturalVector tests: (vector,
     // divisor, modulus or power of 2) triples, by value and by reference, and the same with only
     // invertible divisors, the case FLINT's function handles.
     for demo_name in [
@@ -8955,7 +8955,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "_fmpz_mod_vec_scalar_div_fmpz_mod",
         );
@@ -8970,20 +8970,20 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_mod_vec_scalar_div_fmpz_mod",
         );
     }
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_rising_factorial",
         "fmpz_rfac",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_rising_factorial",
         "fmpz_rfac",
     );
@@ -8991,7 +8991,7 @@ fn test_against_flint() {
         "demo_natural_product_of_unsigneds",
         "demo_natural_product_of_unsigneds_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "_fmpz_ui_vec_prod");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "_fmpz_ui_vec_prod");
     }
     for demo_name in [
         "demo_integer_vector_content_chained",
@@ -9003,7 +9003,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_vec_content_chained",
         );
@@ -9014,7 +9014,7 @@ fn test_against_flint() {
         "demo_integer_vector_to_element_lcm",
         "demo_integer_vector_into_element_lcm",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "_fmpz_vec_lcm");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "_fmpz_vec_lcm");
     }
     // `BigExponentFloat`'s basic functions (FLINT's `arf_t`).
     for (demo_name, flint_mode) in [
@@ -9098,7 +9098,7 @@ fn test_against_flint() {
         ("demo_big_exponent_float_to_upper_hex_string", "arf_hex"),
         ("demo_big_exponent_float_debug", "arf_hex"),
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, flint_mode);
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, flint_mode);
     }
     // `BigExponentFloat`'s conversions (FLINT's `arf_t`).
     for (demo_name, flint_mode) in [
@@ -9265,7 +9265,7 @@ fn test_against_flint() {
             "arf_string",
         ),
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, flint_mode);
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, flint_mode);
     }
     // `BigExponentFloat`'s comparisons.
     for (demo_name, flint_mode) in [
@@ -9602,7 +9602,7 @@ fn test_against_flint() {
             "arf_min_max",
         ),
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, flint_mode);
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, flint_mode);
     }
     // `BigExponentFloat`'s arithmetic (FLINT's `arf_t`).
     for demo_name in [
@@ -9700,7 +9700,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_hypot_prec_round_debug",
         "demo_big_exponent_float_hypot_prec_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_arithmetic");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_arithmetic");
     }
     // `BigExponentFloat`'s averages, positive differences, remainders, rounding to integers,
     // fractional parts, and unit functions (MPFR and FLINT's `arf_t`).
@@ -9749,7 +9749,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_power_of_2_i64_debug",
         "demo_big_exponent_float_is_power_of_2_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_misc");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_misc");
     }
     // `BigExponentFloat`'s positive differences and remainders mixed with a `Rational`.
     for demo_name in [
@@ -9776,7 +9776,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-float",
+            "../mithqalite-float",
             demo_name,
             "arf_misc_rational",
         );
@@ -9808,7 +9808,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_power_of_10_x_minus_1_rational_prec_round_debug",
         "demo_big_exponent_float_power_of_10_x_minus_1_rational_prec_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_exponential");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_exponential");
     }
     // `BigExponentFloat`'s forward trigonometric functions, checked with FLINT's arb ball arithmetic.
     for demo_name in [
@@ -9897,7 +9897,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_tan_with_period_rational_prec_debug",
         "demo_big_exponent_float_tan_with_period_rational_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_trig");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_trig");
     }
     // `BigExponentFloat`'s inverse trigonometric functions, checked with FLINT's arb ball arithmetic.
     for demo_name in [
@@ -9986,7 +9986,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_atan_with_period_rational_prec_debug",
         "demo_big_exponent_float_atan_with_period_rational_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_atrig");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_atrig");
     }
     // `BigExponentFloat`'s forward hyperbolic functions, checked with FLINT's arb ball arithmetic.
     for demo_name in [
@@ -10019,7 +10019,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_tanh_rational_prec_debug",
         "demo_big_exponent_float_tanh_rational_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_hyp");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_hyp");
     }
     // `BigExponentFloat`'s inverse hyperbolic functions, checked with FLINT's arb ball arithmetic.
     for demo_name in [
@@ -10048,7 +10048,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_atanh_rational_prec_debug",
         "demo_big_exponent_float_atanh_rational_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_ihyp");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_ihyp");
     }
     // `BigExponentFloat`'s roots of `Rational`s, checked with exact integer arithmetic.
     for demo_name in [
@@ -10063,7 +10063,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_sqrt_rational_prec_debug",
         "demo_big_exponent_float_sqrt_rational_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_qroot");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_qroot");
     }
     // `BigExponentFloat`'s fused operations with a `Rational` term, checked with exact arithmetic.
     for demo_name in [
@@ -10076,7 +10076,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_sub_mul_rational_prec_debug",
         "demo_big_exponent_float_sub_mul_rational_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_qfused");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_qfused");
     }
     // `BigExponentFloat`'s general powers, checked with arb ball arithmetic and exact powers.
     for demo_name in [
@@ -10097,7 +10097,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_unsigned_pow_unsigned_prec_debug",
         "demo_big_exponent_float_unsigned_pow_unsigned_prec_round_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_pow");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_pow");
     }
     // `BigExponentFloat`'s AGM, checked with FLINT's arb ball arithmetic.
     for demo_name in [
@@ -10110,7 +10110,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_agm_big_exponent_float_rational_prec_round_in_domain_debug",
         "demo_big_exponent_float_agm_big_exponent_float_rational_prec_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_agm");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_agm");
     }
     // `BigExponentFloat`'s logarithms, checked with FLINT's arb ball arithmetic.
     for demo_name in [
@@ -10141,7 +10141,7 @@ fn test_against_flint() {
         "demo_big_exponent_float_ln_unsigned_prec_round_debug",
         "demo_big_exponent_float_ln_unsigned_prec_debug",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-float", demo_name, "arf_logarithm");
+        check_demo_against_flint(&oracle, "../mithqalite-float", demo_name, "arf_logarithm");
     }
     // `BigExponentFloat`'s general-base logarithms and `compound`, checked with FLINT's arb ball
     // arithmetic.
@@ -10178,7 +10178,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-float",
+            "../mithqalite-float",
             demo_name,
             "arf_logarithm_general",
         );
@@ -10194,7 +10194,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-float",
+            "../mithqalite-float",
             demo_name,
             "arf_string_general",
         );
@@ -10214,7 +10214,7 @@ fn test_against_flint() {
         ("demo_mag_div_u64", "mag_div_ui"),
         ("demo_mag_sqrt", "mag_sqrt"),
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, flint_mode);
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, flint_mode);
     }
     for demo_name in [
         "demo_unsigned_vector_content_chained",
@@ -10222,117 +10222,117 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "_fmpz_vec_content_chained",
         );
     }
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_extended_gcd_partial",
         "fmpz_xgcd_partial",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_to_height",
         "fmpq_height",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_into_height",
         "fmpq_height",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_height_significant_bits",
         "fmpq_height_bits",
     );
-    check_demo_against_flint(&oracle, "../malachite-q", "demo_rational_gcd", "fmpq_gcd");
+    check_demo_against_flint(&oracle, "../mithqalite-q", "demo_rational_gcd", "fmpq_gcd");
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_extended_gcd",
         "fmpq_gcd_cofactors",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_farey_neighbors",
         "fmpq_farey_neighbors",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_harmonic_number",
         "fmpq_harmonic",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_dedekind_sum",
         "fmpq_dedekind_sum",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_bell_number",
         "arith_bell_number",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_bell_numbers_prefix",
         "arith_bell_number_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_landau_function_prefix",
         "arith_landau_function_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_polynomial_rising_factorial_polynomial",
         "arith_stirling_number_1u_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_polynomial_rising_factorial_polynomial_truncated",
         "arith_stirling_number_1u_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_polynomial_touchard_polynomial",
         "arith_stirling_number_2_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_polynomial_touchard_polynomial_truncated",
         "arith_stirling_number_2_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_stirling_number_of_the_second_kind",
         "arith_stirling_number_2",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_natural_unsigned_stirling_number_of_the_first_kind",
         "arith_stirling_number_1u",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_stirling_number_of_the_first_kind",
         "arith_stirling_number_1",
     );
@@ -10352,7 +10352,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint_no_special_with_limit(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo,
             mode,
             1000,
@@ -10360,68 +10360,68 @@ fn test_against_flint() {
     }
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_polynomial_falling_factorial_polynomial",
         "arith_stirling_number_1_vec",
     );
     check_demo_against_flint_no_special(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_polynomial_falling_factorial_polynomial_truncated",
         "arith_stirling_number_1_vec",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_exhaustive_by_height",
         "fmpq_next_minimal",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_exhaustive_signed_by_height",
         "fmpq_next_signed_minimal",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_reconstruct",
         "fmpq_reconstruct",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_reconstruct_ref",
         "fmpq_reconstruct",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_reconstruct_with_bounds",
         "fmpq_reconstruct_2",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_reconstruct_with_bounds_ref",
         "fmpq_reconstruct_2",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_reconstruct_tier_rows",
         "fmpq_reconstruct",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-q",
+        "../mithqalite-q",
         "demo_rational_reconstruct_tier_rows",
         "fmpq_reconstruct_2",
     );
 
     // Edge rows for the multi-modulus CRT quirks: a single modulus of 1 is usable, but a 1 or a
 
-    // Every case from test_balanced_mod in malachite-nz's IntegerPolynomial tests, including the
+    // Every case from test_balanced_mod in mithqalite-nz's IntegerPolynomial tests, including the
     // The generated cases from balanced_mod_properties: the (polynomial, nonzero modulus) pairs, by
     // value, by reference, and in place, and every polynomial against the moduli 1, -1, and 2.
     for demo_name in [
@@ -10432,13 +10432,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_scalar_smod_fmpz",
         );
     }
 
-    // The generated cases from balanced_mod_properties in malachite-nz's IntegerVector tests: the
+    // The generated cases from balanced_mod_properties in mithqalite-nz's IntegerVector tests: the
     // (vector, nonzero modulus) pairs, by value, by reference, and in place, and every vector
     // against the moduli 1, -1, and 2.
     for demo_name in [
@@ -10449,13 +10449,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_vec_scalar_smod_fmpz",
         );
     }
 
-    // Every case from test_mod_op in malachite-nz's IntegerPolynomial tests, and the The generated
+    // Every case from test_mod_op in mithqalite-nz's IntegerPolynomial tests, and the The generated
     // cases from mod_op_properties, and the u128 ones from mod_op_unsigned_properties.
     for demo_name in [
         "demo_integer_polynomial_mod_op",
@@ -10465,7 +10465,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_scalar_mod_fmpz",
         );
@@ -10482,7 +10482,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_get_nmod_poly",
         );
@@ -10512,7 +10512,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_mod_poly_set_fmpz_poly",
         );
@@ -10527,13 +10527,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "n_primitive_root_prime",
         );
     }
 
-    // Every case from test_evaluate in malachite-nz's IntegerPolynomial and NaturalPolynomial
+    // Every case from test_evaluate in mithqalite-nz's IntegerPolynomial and NaturalPolynomial
     // tests, checked against FLINT's evaluation and against each of the two algorithms it chooses
     // between. The generated cases from evaluate_properties: by value and by reference, polynomials
     // of degree at least 50 (which take the divide-and-conquer path), and each algorithm on its
@@ -10564,36 +10564,36 @@ fn test_against_flint() {
             "fmpz_poly_evaluate_divconquer_fmpq",
         ),
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, flint_mode);
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, flint_mode);
     }
 
-    // Every case from test_evaluate_rational_polynomial in malachite-q's tests, and the generated
+    // Every case from test_evaluate_rational_polynomial in mithqalite-q's tests, and the generated
     for demo_name in [
         "demo_rational_polynomial_evaluate",
         "demo_rational_polynomial_evaluate_ref",
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo_name,
             "fmpq_poly_evaluate_fmpq",
         );
     }
 
-    // Every case from test_evaluate_rational_polynomial_integer in malachite-q's tests, and the
+    // Every case from test_evaluate_rational_polynomial_integer in mithqalite-q's tests, and the
     for demo_name in [
         "demo_rational_polynomial_evaluate_integer",
         "demo_rational_polynomial_evaluate_integer_ref",
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo_name,
             "fmpq_poly_evaluate_fmpz",
         );
     }
 
-    // Every case from test_mod_power_of_2_evaluate in malachite-nz's NaturalPolynomial tests, and
+    // Every case from test_mod_power_of_2_evaluate in mithqalite-nz's NaturalPolynomial tests, and
     // the
     for demo_name in [
         "demo_natural_polynomial_mod_power_of_2_evaluate",
@@ -10601,47 +10601,47 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_mod_poly_evaluate_fmpz",
         );
     }
 
-    // Every case from test_mod_power_of_2_evaluate in malachite-base's UnsignedPolynomial tests,
+    // Every case from test_mod_power_of_2_evaluate in mithqalite-base's UnsignedPolynomial tests,
     for demo_name in [
         "demo_unsigned_polynomial_mod_power_of_2_evaluate",
         "demo_unsigned_polynomial_mod_power_of_2_evaluate_ref",
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "fmpz_mod_poly_evaluate_fmpz",
         );
     }
 
-    // Every case from test_mod_evaluate_u64 in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mod_evaluate_u64 in mithqalite-nz's IntegerPolynomial tests, and the
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integer_polynomial_mod_evaluate_u64",
         "fmpz_poly_evaluate_mod",
     );
 
-    // Every case from test_mod_evaluate in malachite-base's UnsignedPolynomial tests, and the
+    // Every case from test_mod_evaluate in mithqalite-base's UnsignedPolynomial tests, and the
     for demo_name in [
         "demo_unsigned_polynomial_mod_evaluate",
         "demo_unsigned_polynomial_mod_evaluate_ref",
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             demo_name,
             "fmpz_mod_poly_evaluate_fmpz",
         );
     }
 
-    // Every case from test_mod_evaluate in malachite-nz's NaturalPolynomial tests, and the
+    // Every case from test_mod_evaluate in mithqalite-nz's NaturalPolynomial tests, and the
     // generated
     for demo_name in [
         "demo_natural_polynomial_mod_evaluate",
@@ -10649,13 +10649,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_mod_poly_evaluate_fmpz",
         );
     }
 
-    // Every case from test_add and test_add_self in malachite-q's RationalPolynomial tests, and the
+    // Every case from test_add and test_add_self in mithqalite-q's RationalPolynomial tests, and the
     for demo_name in [
         "demo_rational_polynomial_add",
         "demo_rational_polynomial_add_val_ref",
@@ -10664,10 +10664,10 @@ fn test_against_flint() {
         "demo_rational_polynomial_add_assign",
         "demo_rational_polynomial_add_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, "fmpq_poly_add");
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, "fmpq_poly_add");
     }
 
-    // Every case from test_sub and test_sub_self in malachite-q's RationalPolynomial tests, and the
+    // Every case from test_sub and test_sub_self in mithqalite-q's RationalPolynomial tests, and the
     for demo_name in [
         "demo_rational_polynomial_sub",
         "demo_rational_polynomial_sub_val_ref",
@@ -10676,10 +10676,10 @@ fn test_against_flint() {
         "demo_rational_polynomial_sub_assign",
         "demo_rational_polynomial_sub_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, "fmpq_poly_sub");
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, "fmpq_poly_sub");
     }
 
-    // Every case from test_add_truncated in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_add_truncated in mithqalite-nz's IntegerPolynomial tests, and the
     for demo_name in [
         "demo_integer_polynomial_add_truncated",
         "demo_integer_polynomial_add_truncated_val_ref",
@@ -10690,13 +10690,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_add_series",
         );
     }
 
-    // Every case from test_add_truncated in malachite-nz's NaturalPolynomial tests, and the
+    // Every case from test_add_truncated in mithqalite-nz's NaturalPolynomial tests, and the
     for demo_name in [
         "demo_natural_polynomial_add_truncated",
         "demo_natural_polynomial_add_truncated_val_ref",
@@ -10707,13 +10707,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_add_series",
         );
     }
 
-    // Every case from test_sub_truncated in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_sub_truncated in mithqalite-nz's IntegerPolynomial tests, and the
     for demo_name in [
         "demo_integer_polynomial_sub_truncated",
         "demo_integer_polynomial_sub_truncated_val_ref",
@@ -10724,13 +10724,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_sub_series",
         );
     }
 
-    // Every case from test_add_truncated and test_add_truncated_self in malachite-q's
+    // Every case from test_add_truncated and test_add_truncated_self in mithqalite-q's
     for demo_name in [
         "demo_rational_polynomial_add_truncated",
         "demo_rational_polynomial_add_truncated_val_ref",
@@ -10739,10 +10739,10 @@ fn test_against_flint() {
         "demo_rational_polynomial_add_truncated_assign",
         "demo_rational_polynomial_add_truncated_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, "fmpq_poly_add_series");
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, "fmpq_poly_add_series");
     }
 
-    // Every case from test_sub_truncated and test_sub_truncated_self in malachite-q's
+    // Every case from test_sub_truncated and test_sub_truncated_self in mithqalite-q's
     for demo_name in [
         "demo_rational_polynomial_sub_truncated",
         "demo_rational_polynomial_sub_truncated_val_ref",
@@ -10751,90 +10751,90 @@ fn test_against_flint() {
         "demo_rational_polynomial_sub_truncated_assign",
         "demo_rational_polynomial_sub_truncated_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-q", demo_name, "fmpq_poly_sub_series");
+        check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, "fmpq_poly_sub_series");
     }
 
-    // Every case from test_bit_pack in malachite-nz's IntegerPolynomial tests, and the generated
+    // Every case from test_bit_pack in mithqalite-nz's IntegerPolynomial tests, and the generated
     for demo_name in [
         "demo_integer_polynomial_bit_pack",
         "demo_integer_polynomial_bit_pack_ref",
         "demo_integer_polynomial_bit_pack_small_bits",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_bit_pack");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_bit_pack");
     }
 
-    // Every case from test_bit_pack in malachite-nz's NaturalPolynomial tests, and the generated
+    // Every case from test_bit_pack in mithqalite-nz's NaturalPolynomial tests, and the generated
     for demo_name in [
         "demo_natural_polynomial_bit_pack",
         "demo_natural_polynomial_bit_pack_ref",
         "demo_natural_polynomial_bit_pack_small_bits",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_bit_pack");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_bit_pack");
     }
 
-    // Every case from test_bit_unpack in malachite-nz's NaturalPolynomial tests, and the generated
+    // Every case from test_bit_unpack in mithqalite-nz's NaturalPolynomial tests, and the generated
     for demo_name in [
         "demo_natural_polynomial_bit_unpack",
         "demo_natural_polynomial_bit_unpack_ref",
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_bit_unpack_unsigned",
         );
     }
 
-    // Every case from test_bit_unpack in malachite-nz's IntegerPolynomial tests, and the generated
+    // Every case from test_bit_unpack in mithqalite-nz's IntegerPolynomial tests, and the generated
     for demo_name in [
         "demo_integer_polynomial_bit_unpack",
         "demo_integer_polynomial_bit_unpack_ref",
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_bit_unpack",
         );
     }
 
-    // Every case from test_mul_to_out_classical in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_to_out_classical in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mul_classical.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_to_out_classical",
         "_fmpz_poly_mul_classical",
     );
 
-    // Every case from test_mul_to_out_tiny_1 in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_to_out_tiny_1 in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mul.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_to_out_tiny_1",
         "_fmpz_poly_mul",
     );
 
-    // Every case from test_mul_to_out_tiny_2 in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_to_out_tiny_2 in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mul.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_to_out_tiny_2",
         "_fmpz_poly_mul",
     );
 
-    // Every case from test_mul_greater_to_out in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_greater_to_out in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mul.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_greater_to_out",
         "_fmpz_poly_mul",
     );
 
-    // Every case from test_mul in malachite-nz's IntegerPolynomial tests, and the generated cases
+    // Every case from test_mul in mithqalite-nz's IntegerPolynomial tests, and the generated cases
     // from its demos, against fmpz_poly_mul.
     for demo_name in [
         "demo_integer_polynomial_mul",
@@ -10844,46 +10844,46 @@ fn test_against_flint() {
         "demo_integer_polynomial_mul_assign",
         "demo_integer_polynomial_mul_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_mul");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_mul");
     }
 
-    // Every case from test_mul_truncated_to_out_classical in malachite-nz's IntegerPolynomial
+    // Every case from test_mul_truncated_to_out_classical in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demos, against _fmpz_poly_mullow_classical.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out_classical",
         "_fmpz_poly_mullow_classical",
     );
 
-    // Every case from test_mul_truncated_to_out_tiny_1 in malachite-nz's IntegerPolynomial tests,
+    // Every case from test_mul_truncated_to_out_tiny_1 in mithqalite-nz's IntegerPolynomial tests,
     // and the generated cases from its demos, against _fmpz_poly_mullow.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out_tiny_1",
         "_fmpz_poly_mullow",
     );
 
-    // Every case from test_mul_truncated_to_out_tiny_2 in malachite-nz's IntegerPolynomial tests,
+    // Every case from test_mul_truncated_to_out_tiny_2 in mithqalite-nz's IntegerPolynomial tests,
     // and the generated cases from its demos, against _fmpz_poly_mullow.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out_tiny_2",
         "_fmpz_poly_mullow",
     );
 
-    // Every case from test_mul_truncated_to_out in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_truncated_to_out in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mullow.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out",
         "_fmpz_poly_mullow",
     );
 
-    // Every case from test_mul_truncated in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_truncated in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against fmpz_poly_mullow.
     for demo_name in [
         "demo_integer_polynomial_mul_truncated",
@@ -10893,10 +10893,10 @@ fn test_against_flint() {
         "demo_integer_polynomial_mul_truncated_assign",
         "demo_integer_polynomial_mul_truncated_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_mullow");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_mullow");
     }
 
-    // Every case from test_mul_middle in malachite-nz's IntegerPolynomial and NaturalPolynomial
+    // Every case from test_mul_middle in mithqalite-nz's IntegerPolynomial and NaturalPolynomial
     // tests, and the generated cases from their demos, against fmpz_poly_mulmid.
     for demo_name in [
         "demo_integer_polynomial_mul_middle",
@@ -10912,10 +10912,10 @@ fn test_against_flint() {
         "demo_natural_polynomial_mul_middle_assign",
         "demo_natural_polynomial_mul_middle_assign_ref",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_mulmid");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_mulmid");
     }
 
-    // Every case from test_inverse_truncated in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_inverse_truncated in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against fmpz_poly_inv_series and its algorithms.
     for demo_name in [
         "demo_integer_polynomial_inverse_truncated",
@@ -10925,13 +10925,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_inv_series",
         );
     }
 
-    // Every case from test_div_truncated in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_div_truncated in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against fmpz_poly_div_series and its algorithms.
     for demo_name in [
         "demo_integer_polynomial_div_truncated",
@@ -10946,13 +10946,13 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "fmpz_poly_div_series",
         );
     }
 
-    // Every case from the RationalPolynomial division tests in malachite-q, and the generated cases
+    // Every case from the RationalPolynomial division tests in mithqalite-q, and the generated cases
     // from their demos, against fmpq_poly_divrem, fmpq_poly_divides, fmpq_poly_remove,
     // fmpq_poly_inv_series, and fmpq_poly_div_series.
     for (demo_names, flint_mode) in [
@@ -11012,7 +11012,7 @@ fn test_against_flint() {
         ),
     ] {
         for demo_name in demo_names {
-            check_demo_against_flint(&oracle, "../malachite-q", demo_name, flint_mode);
+            check_demo_against_flint(&oracle, "../mithqalite-q", demo_name, flint_mode);
         }
     }
 
@@ -11031,23 +11031,23 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint_random_modes_with_limit(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             flint_mode,
             100,
         );
     }
 
-    // Every case from test_mul_high_to_out_classical in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_mul_high_to_out_classical in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demos, against _fmpz_poly_mulhigh_classical.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_high_to_out_classical",
         "_fmpz_poly_mulhigh_classical",
     );
 
-    // Every case from test_mul_middle_to_out_classical in malachite-nz's IntegerPolynomial tests,
+    // Every case from test_mul_middle_to_out_classical in mithqalite-nz's IntegerPolynomial tests,
     // and the generated cases from its demos, against _fmpz_poly_mulmid_classical.
     for demo_name in [
         "demo_mul_middle_to_out_classical",
@@ -11055,222 +11055,222 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_poly_mulmid_classical",
         );
     }
 
-    // Every case from test_mul_middle_to_out_tiny_1 in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_mul_middle_to_out_tiny_1 in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demos, against _fmpz_poly_mulmid.
     for demo_name in [
         "demo_mul_middle_to_out_tiny_1",
         "demo_mul_middle_to_out_tiny_1_square",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "_fmpz_poly_mulmid");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "_fmpz_poly_mulmid");
     }
 
-    // Every case from test_mul_middle_to_out_tiny_2 in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_mul_middle_to_out_tiny_2 in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demos, against _fmpz_poly_mulmid.
     for demo_name in [
         "demo_mul_middle_to_out_tiny_2",
         "demo_mul_middle_to_out_tiny_2_square",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "_fmpz_poly_mulmid");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "_fmpz_poly_mulmid");
     }
 
-    // Every case from test_mul_middle_to_out in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_middle_to_out in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mulmid.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_middle_to_out",
         "_fmpz_poly_mulmid",
     );
 
-    // Every case from test_square_to_out_classical in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_square_to_out_classical in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demos, against _fmpz_poly_sqr_classical.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_to_out_classical",
         "_fmpz_poly_sqr_classical",
     );
 
-    // Every case from test_square_to_out_tiny_1 in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_square_to_out_tiny_1 in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_sqr.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_to_out_tiny_1",
         "_fmpz_poly_sqr",
     );
 
-    // Every case from test_square_to_out_tiny_2 in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_square_to_out_tiny_2 in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_sqr.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_to_out_tiny_2",
         "_fmpz_poly_sqr",
     );
 
-    // Every case from test_square_to_out in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_square_to_out in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_sqr.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_to_out",
         "_fmpz_poly_sqr",
     );
 
-    // Every case from test_square in malachite-nz's IntegerPolynomial tests, and the generated
+    // Every case from test_square in mithqalite-nz's IntegerPolynomial tests, and the generated
     // cases from its demos, against fmpz_poly_sqr.
     for demo_name in [
         "demo_integer_polynomial_square",
         "demo_integer_polynomial_square_ref",
         "demo_integer_polynomial_square_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_sqr");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_sqr");
     }
 
-    // Every case from test_square_truncated_to_out_classical in malachite-nz's IntegerPolynomial
+    // Every case from test_square_truncated_to_out_classical in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demos, against _fmpz_poly_sqrlow_classical.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out_classical",
         "_fmpz_poly_sqrlow_classical",
     );
 
-    // Every case from test_square_truncated_to_out_tiny_1 in malachite-nz's IntegerPolynomial
+    // Every case from test_square_truncated_to_out_tiny_1 in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demos, against _fmpz_poly_sqrlow.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out_tiny_1",
         "_fmpz_poly_sqrlow",
     );
 
-    // Every case from test_square_truncated_to_out_tiny_2 in malachite-nz's IntegerPolynomial
+    // Every case from test_square_truncated_to_out_tiny_2 in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demos, against _fmpz_poly_sqrlow.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out_tiny_2",
         "_fmpz_poly_sqrlow",
     );
 
-    // Every case from test_square_truncated_to_out in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_square_truncated_to_out in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demos, against _fmpz_poly_sqrlow.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out",
         "_fmpz_poly_sqrlow",
     );
 
-    // Every case from test_square_truncated in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_square_truncated in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against fmpz_poly_sqrlow.
     for demo_name in [
         "demo_integer_polynomial_square_truncated",
         "demo_integer_polynomial_square_truncated_ref",
         "demo_integer_polynomial_square_truncated_assign",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, "fmpz_poly_sqrlow");
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, "fmpz_poly_sqrlow");
     }
 
-    // Every case from test_mul_to_out_karatsuba in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_to_out_karatsuba in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demo, against _fmpz_poly_mul_karatsuba.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_to_out_karatsuba",
         "_fmpz_poly_mul_karatsuba",
     );
 
-    // Every case from test_mul_truncated_to_out_karatsuba_n in malachite-nz's IntegerPolynomial
+    // Every case from test_mul_truncated_to_out_karatsuba_n in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demo, against _fmpz_poly_mullow_karatsuba_n.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out_karatsuba_n",
         "_fmpz_poly_mullow_karatsuba_n",
     );
 
-    // Every case from test_mul_truncated_to_out_karatsuba in malachite-nz's IntegerPolynomial
+    // Every case from test_mul_truncated_to_out_karatsuba in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demo, against _fmpz_poly_mullow_karatsuba.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out_karatsuba",
         "_fmpz_poly_mullow_karatsuba",
     );
 
-    // Every case from test_mul_high_to_out_karatsuba_n in malachite-nz's IntegerPolynomial tests,
+    // Every case from test_mul_high_to_out_karatsuba_n in mithqalite-nz's IntegerPolynomial tests,
     // and the generated cases from its demo, against _fmpz_poly_mulhigh_karatsuba_n.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_high_to_out_karatsuba_n",
         "_fmpz_poly_mulhigh_karatsuba_n",
     );
 
-    // Every case from test_mul_high_to_out in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_high_to_out in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demo, against _fmpz_poly_mulhigh.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_high_to_out",
         "_fmpz_poly_mulhigh",
     );
 
-    // Every case from test_square_to_out_karatsuba in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_square_to_out_karatsuba in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demo, against _fmpz_poly_sqr_karatsuba.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_to_out_karatsuba",
         "_fmpz_poly_sqr_karatsuba",
     );
 
-    // Every case from test_square_truncated_to_out_karatsuba_n in malachite-nz's IntegerPolynomial
+    // Every case from test_square_truncated_to_out_karatsuba_n in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demo, against _fmpz_poly_sqrlow_karatsuba_n.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out_karatsuba_n",
         "_fmpz_poly_sqrlow_karatsuba_n",
     );
 
-    // Every case from test_square_truncated_to_out_karatsuba in malachite-nz's IntegerPolynomial
+    // Every case from test_square_truncated_to_out_karatsuba in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demo, against _fmpz_poly_sqrlow_karatsuba.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out_karatsuba",
         "_fmpz_poly_sqrlow_karatsuba",
     );
 
-    // Every case from test_mul_to_out_kronecker in malachite-nz's IntegerPolynomial tests, and the
+    // Every case from test_mul_to_out_kronecker in mithqalite-nz's IntegerPolynomial tests, and the
     // generated cases from its demos, against _fmpz_poly_mul_KS.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_to_out_kronecker",
         "_fmpz_poly_mul_KS",
     );
 
-    // Every case from test_mul_truncated_to_out_kronecker in malachite-nz's IntegerPolynomial
+    // Every case from test_mul_truncated_to_out_kronecker in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demos, against _fmpz_poly_mullow_KS.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_mul_truncated_to_out_kronecker",
         "_fmpz_poly_mullow_KS",
     );
 
-    // Every case from test_mul_middle_to_out_kronecker in malachite-nz's IntegerPolynomial tests,
+    // Every case from test_mul_middle_to_out_kronecker in mithqalite-nz's IntegerPolynomial tests,
     // and the generated cases from its demos, against _fmpz_poly_mulmid_KS.
     for demo_name in [
         "demo_mul_middle_to_out_kronecker",
@@ -11278,31 +11278,31 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_poly_mulmid_KS",
         );
     }
 
-    // Every case from test_square_to_out_kronecker in malachite-nz's IntegerPolynomial tests, and
+    // Every case from test_square_to_out_kronecker in mithqalite-nz's IntegerPolynomial tests, and
     // the generated cases from its demos, against _fmpz_poly_sqr_KS.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_to_out_kronecker",
         "_fmpz_poly_sqr_KS",
     );
 
-    // Every case from test_square_truncated_to_out_kronecker in malachite-nz's IntegerPolynomial
+    // Every case from test_square_truncated_to_out_kronecker in mithqalite-nz's IntegerPolynomial
     // tests, and the generated cases from its demos, against _fmpz_poly_sqrlow_KS.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_square_truncated_to_out_kronecker",
         "_fmpz_poly_sqrlow_KS",
     );
 
-    // Every literal case from test_mul_middle_to_out_fft in malachite-nz's IntegerPolynomial tests,
+    // Every literal case from test_mul_middle_to_out_fft in mithqalite-nz's IntegerPolynomial tests,
     // and the generated cases from its demos, against _fmpz_poly_mul_mid_default_mpn_ctx, including
     // whether it declines.
     for demo_name in [
@@ -11313,320 +11313,320 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             demo_name,
             "_fmpz_poly_mul_mid_default_mpn_ctx",
         );
     }
 
     // The generated cases from the demos of the port of FLINT's Schönhage–Strassen code in
-    // malachite-nz (`natural::arithmetic::mul::schonhage_strassen`), against the FLINT functions
+    // mithqalite-nz (`natural::arithmetic::mul::schonhage_strassen`), against the FLINT functions
     // they port. Demos whose lines are long run fewer of them.
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_add_signed_limb_mod_2expp1",
         "mpn_addmod_2expp1_1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_sum_diff",
         "flint_mpn_sumdiff_n",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_norm_mod_2expp1",
         "mpn_normmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_neg_mod_2expp1_to_out",
         "mpn_negmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_mul_2exp_mod_2expp1_in_place",
         "mpn_mul_2expmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_mul_2exp_mod_2expp1_to_out",
         "mpn_mul_2expmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_div_2exp_mod_2expp1_in_place",
         "mpn_div_2expmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_div_2exp_mod_2expp1_to_out",
         "mpn_div_2expmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_fft_adjust",
         "fft_adjust",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_fft_adjust_sqrt2",
         "fft_adjust_sqrt2",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_butterfly_lsh_b",
         "butterfly_lshB",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_butterfly_rsh_b",
         "butterfly_rshB",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_fft_butterfly",
         "fft_butterfly",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_ifft_butterfly",
         "ifft_butterfly",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_fft_butterfly_sqrt2",
         "fft_butterfly_sqrt2",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_ifft_butterfly_sqrt2",
         "ifft_butterfly_sqrt2",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_fft_butterfly_twiddle",
         "fft_butterfly_twiddle",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_ifft_butterfly_twiddle",
         "ifft_butterfly_twiddle",
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_radix2",
         "fft_radix2",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_radix2",
         "ifft_radix2",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_truncate1",
         "fft_truncate1",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_truncate",
         "fft_truncate",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_truncate1",
         "ifft_truncate1",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_truncate",
         "ifft_truncate",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_truncate_sqrt2",
         "fft_truncate_sqrt2",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_truncate_sqrt2",
         "ifft_truncate_sqrt2",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_negacyclic",
         "fft_negacyclic",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_negacyclic",
         "ifft_negacyclic",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_radix2_twiddle",
         "fft_radix2_twiddle",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_radix2_twiddle",
         "ifft_radix2_twiddle",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_truncate1_twiddle",
         "fft_truncate1_twiddle",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_truncate1_twiddle",
         "ifft_truncate1_twiddle",
         3000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_mfa_truncate_sqrt2_outer",
         "fft_mfa_truncate_sqrt2_outer",
         1500,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_ifft_mfa_truncate_sqrt2_outer",
         "ifft_mfa_truncate_sqrt2_outer",
         1500,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_mfa_truncate_sqrt2_inner",
         "fft_mfa_truncate_sqrt2_inner",
         1000,
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_limbs_mul_mod_2expp1_basecase",
         "flint_mpn_mulmod_2expp1_basecase",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_naive_convolution_1",
         "fft_naive_convolution_1",
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_mulmod_2expp1_negacyclic",
         "_fft_mulmod_2expp1",
         3000,
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_mulmod_2expp1",
         "fft_mulmod_2expp1",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_adjust_limbs",
         "fft_adjust_limbs",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_split_limbs",
         "fft_split_limbs",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_split_bits",
         "fft_split_bits",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_combine_limbs",
         "fft_combine_limbs",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_combine_bits",
         "fft_combine_bits",
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_convolution",
         "fft_convolution",
         1000,
     );
     check_demo_against_flint_with_limit(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_fft_convolution_matrix_fourier",
         "fft_convolution",
         200,
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integers_to_fermat_residues",
         "_fmpz_vec_get_fft",
     );
     check_demo_against_flint(
         &oracle,
-        "../malachite-nz",
+        "../mithqalite-nz",
         "demo_integers_from_fermat_residues",
         "_fmpz_vec_set_fft",
     );
@@ -11661,7 +11661,7 @@ fn test_against_flint() {
             "_fmpz_poly_sqrlow_SS",
         ),
     ] {
-        check_demo_against_flint(&oracle, "../malachite-nz", demo_name, flint_mode);
+        check_demo_against_flint(&oracle, "../mithqalite-nz", demo_name, flint_mode);
     }
 
     // The products of IntegerMatrixes and NaturalMatrixes, against fmpz_mat_mul. The `_large_*`
@@ -11679,7 +11679,7 @@ fn test_against_flint() {
         ] {
             check_demo_against_flint(
                 &oracle,
-                "../malachite-nz",
+                "../mithqalite-nz",
                 &format!("demo_{matrix}_mul{suffix}"),
                 "fmpz_mat_mul",
             );
@@ -11692,7 +11692,7 @@ fn test_against_flint() {
         ] {
             check_demo_against_flint_random_modes_with_limit(
                 &oracle,
-                "../malachite-nz",
+                "../mithqalite-nz",
                 &format!("demo_{matrix}_mul{suffix}"),
                 "fmpz_mat_mul",
                 limit,
@@ -11708,11 +11708,11 @@ fn test_against_flint() {
         "demo_unsigned_matrix_mod_mul_matrix_assign",
         "demo_unsigned_matrix_mod_mul_matrix_small_moduli",
     ] {
-        check_demo_against_flint(&oracle, "../malachite-base", demo_name, "nmod_mat_mul");
+        check_demo_against_flint(&oracle, "../mithqalite-base", demo_name, "nmod_mat_mul");
     }
     check_demo_against_flint_random_modes_with_limit(
         &oracle,
-        "../malachite-base",
+        "../mithqalite-base",
         "demo_unsigned_matrix_mod_mul_matrix_large_dimensions",
         "nmod_mat_mul",
         5,
@@ -11723,8 +11723,8 @@ fn test_against_flint() {
     // fmpz_mat_strong_echelon_form_mod. The NaturalMatrix demos' moduli are products of powers of
     // small primes, so most have more than 64 bits and every case has zero divisors.
     for (crate_dir, matrix, flint_prefix) in [
-        ("../malachite-base", "unsigned_matrix", "nmod_mat"),
-        ("../malachite-nz", "natural_matrix", "fmpz_mod_mat"),
+        ("../mithqalite-base", "unsigned_matrix", "nmod_mat"),
+        ("../mithqalite-nz", "natural_matrix", "fmpz_mod_mat"),
     ] {
         for (op, flint_op) in [
             ("mod_howell_form", "howell_form"),
@@ -11751,7 +11751,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             &format!("demo_unsigned_matrix_{op}"),
             flint_mode,
         );
@@ -11762,7 +11762,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint_random_modes_with_limit(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             &format!("demo_unsigned_matrix_{op}_large_dimensions"),
             flint_mode,
             100,
@@ -11779,7 +11779,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             &format!("demo_unsigned_matrix_{op}"),
             flint_mode,
         );
@@ -11796,14 +11796,14 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-base",
+            "../mithqalite-base",
             &format!("demo_unsigned_matrix_{op}"),
             flint_mode,
         );
     }
     check_demo_against_flint_random_modes_with_limit(
         &oracle,
-        "../malachite-base",
+        "../mithqalite-base",
         "demo_unsigned_matrix_mod_reduced_row_echelon_form_large_dimensions",
         "nmod_mat_rref",
         100,
@@ -11824,7 +11824,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_natural_matrix_{op}"),
             flint_mode,
         );
@@ -11840,7 +11840,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_natural_matrix_{op}"),
             flint_mode,
         );
@@ -11858,7 +11858,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_natural_matrix_{op}"),
             flint_mode,
         );
@@ -11871,7 +11871,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint_with_limit(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_natural_matrix_{op}_large_dimensions"),
             flint_mode,
             300,
@@ -11889,7 +11889,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_integer_matrix_{op}"),
             flint_mode,
         );
@@ -11910,7 +11910,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_integer_matrix_{op}"),
             flint_mode,
         );
@@ -11927,7 +11927,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_integer_matrix_{op}"),
             flint_mode,
         );
@@ -11974,7 +11974,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_integer_matrix_{op}"),
             flint_mode,
         );
@@ -12001,7 +12001,7 @@ fn test_against_flint() {
         for suffix in ["", "_low_rank"] {
             check_demo_against_flint(
                 &oracle,
-                "../malachite-q",
+                "../mithqalite-q",
                 &format!("demo_rational_matrix_{op}{suffix}"),
                 flint_mode,
             );
@@ -12012,57 +12012,57 @@ fn test_against_flint() {
     // and fmpq_mat_det. The `_low_rank` demos make many matrices singular.
     for (crate_dir, demo, flint_mode) in [
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant",
             "fmpz_mat_det",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_low_rank",
             "fmpz_mat_det",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_modular",
             "fmpz_mat_det_modular",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_modular_low_rank",
             "fmpz_mat_det_modular",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_modular_unproved",
             "fmpz_mat_det_modular",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_modular_accelerated",
             "fmpz_mat_det_modular_accelerated",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_modular_accelerated_low_rank",
             "fmpz_mat_det_modular_accelerated",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_divisor",
             "fmpz_mat_det_divisor",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_divisor_low_rank",
             "fmpz_mat_det_divisor",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_determinant",
             "fmpq_mat_det",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_determinant_low_rank",
             "fmpq_mat_det",
         ),
@@ -12076,197 +12076,197 @@ fn test_against_flint() {
     // against fmpz_mat_permanent reduced modulo the modulus.
     for (crate_dir, demo, flint_mode) in [
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_permanent",
             "fmpz_mat_permanent",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_permanent_dense",
             "fmpz_mat_permanent",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_permanent_cofactor",
             "fmpz_mat_permanent",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_permanent_glynn",
             "fmpz_mat_permanent",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_permanent",
             "fmpz_mat_permanent",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_permanent",
             "fmpq_mat_permanent",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_sign",
             "fmpz_mat_det_sign",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_determinant_sign_low_rank",
             "fmpz_mat_det_sign",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_determinant_sign",
             "fmpz_mat_det_sign",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_determinant_sign",
             "fmpq_mat_det_sign",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_determinant_sign_low_rank",
             "fmpq_mat_det_sign",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_power_of_2_determinant",
             "fmpz_mod_mat_det_power_of_2",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_power_of_2_determinant",
             "fmpz_mod_mat_det_power_of_2",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_power_of_2_permanent",
             "fmpz_mat_permanent_power_of_2",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_power_of_2_permanent",
             "fmpz_mat_permanent_power_of_2",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_permanent",
             "fmpz_mat_permanent_mod",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_permanent",
             "fmpz_mat_permanent_mod",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_similarity_transform",
             "fmpz_mat_similarity",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_characteristic_polynomial",
             "fmpz_mat_charpoly",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_characteristic_polynomial",
             "fmpz_mat_charpoly",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "integer_matrix_characteristic_polynomial_bound",
             "fmpz_mat_charpoly_bound",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_characteristic_polynomial",
             "fmpq_mat_charpoly",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_characteristic_polynomial_ref",
             "fmpq_mat_charpoly",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_power_of_2_characteristic_polynomial",
             "fmpz_mod_mat_charpoly_power_of_2",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_power_of_2_characteristic_polynomial_ref",
             "fmpz_mod_mat_charpoly_power_of_2",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_power_of_2_characteristic_polynomial",
             "fmpz_mod_mat_charpoly_power_of_2",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_power_of_2_characteristic_polynomial_ref",
             "fmpz_mod_mat_charpoly_power_of_2",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_characteristic_polynomial",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_characteristic_polynomial_ref",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_characteristic_polynomial_large_dimensions",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_characteristic_polynomial",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_characteristic_polynomial_ref",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_characteristic_polynomial_large_moduli",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_characteristic_polynomial_large_dimensions",
             "fmpz_mod_mat_charpoly",
         ),
         (
-            "../malachite-q",
+            "../mithqalite-q",
             "rational_matrix_similarity_transform",
             "fmpq_mat_similarity",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_similarity_transform_u64",
             "nmod_mat_similarity",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_similarity_transform",
             "fmpz_mod_mat_similarity",
         ),
         (
-            "../malachite-base",
+            "../mithqalite-base",
             "unsigned_matrix_mod_power_of_2_similarity_transform_u64",
             "fmpz_mod_mat_similarity_power_of_2",
         ),
         (
-            "../malachite-nz",
+            "../mithqalite-nz",
             "natural_matrix_mod_power_of_2_similarity_transform",
             "fmpz_mod_mat_similarity_power_of_2",
         ),
@@ -12333,7 +12333,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_{demo}"),
             flint_mode,
         );
@@ -12393,7 +12393,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-nz",
+            "../mithqalite-nz",
             &format!("demo_{demo}"),
             flint_mode,
         );
@@ -12407,7 +12407,7 @@ fn test_against_flint() {
     ] {
         check_demo_against_flint(
             &oracle,
-            "../malachite-q",
+            "../mithqalite-q",
             demo,
             "fmpq_mat_set_fmpz_mat_mod_fmpz",
         );

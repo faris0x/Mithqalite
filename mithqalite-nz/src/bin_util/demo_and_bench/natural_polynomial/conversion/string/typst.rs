@@ -1,0 +1,80 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::polynomial::Polynomial;
+use mithqalite_base::strings::typst::ToTypst;
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_base::vars::VarScheme;
+use mithqalite_base::vars::greek::GreekVars;
+use mithqalite_base::vars::indexed::IndexedVars;
+use mithqalite_nz::test_util::bench::bucketers::natural_polynomial_bit_bucketer;
+use mithqalite_nz::test_util::generators::natural_polynomial_gen;
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_natural_polynomial_to_typst);
+    register_demo!(runner, demo_natural_polynomial_to_typst_string_with);
+    register_bench!(runner, benchmark_natural_polynomial_to_typst_string);
+    register_bench!(runner, benchmark_natural_polynomial_to_typst_string_with);
+}
+
+fn demo_natural_polynomial_to_typst(gm: GenMode, config: &GenConfig, limit: usize) {
+    for x in natural_polynomial_gen().get(gm, config).take(limit) {
+        println!("{}.to_typst() = {}", x, x.to_typst());
+    }
+}
+
+fn benchmark_natural_polynomial_to_typst_string(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "NaturalPolynomial.to_typst_string()",
+        BenchmarkType::Single,
+        natural_polynomial_gen().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &natural_polynomial_bit_bucketer("p"),
+        &mut [("Malachite", &mut |x| no_out!(x.to_typst_string()))],
+    );
+}
+
+fn demo_natural_polynomial_to_typst_string_with(gm: GenMode, config: &GenConfig, limit: usize) {
+    for p in natural_polynomial_gen().get(gm, config).take(limit) {
+        println!(
+            "{} is {} and {}",
+            p,
+            p.to_typst_string_with(GreekVars.var(0)),
+            p.to_typst_string_with(IndexedVars.var(7))
+        );
+    }
+}
+
+fn benchmark_natural_polynomial_to_typst_string_with(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "NaturalPolynomial.to_typst_string_with(Var)",
+        BenchmarkType::Single,
+        natural_polynomial_gen().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &natural_polynomial_bit_bucketer("p"),
+        &mut [("Malachite", &mut |p| {
+            no_out!(p.to_typst_string_with(IndexedVars.var(7)));
+        })],
+    );
+}

@@ -1,0 +1,23 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+pub mod format_float;
+pub mod from_sci_string;
+pub mod from_string;
+pub mod get_str;
+pub(crate) mod get_str_data;
+/// The implementation of [`ToLatex`](mithqalite_base::strings::latex::ToLatex) for a
+/// [`Float`](crate::Float).
+pub mod latex;
+pub mod set_str;
+pub mod strtofr;
+pub mod to_sci;
+pub mod to_string;
+/// The implementation of [`ToTypst`](mithqalite_base::strings::typst::ToTypst) for a
+/// [`Float`](crate::Float).
+pub mod typst;

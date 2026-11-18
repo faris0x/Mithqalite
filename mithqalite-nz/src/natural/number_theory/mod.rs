@@ -1,0 +1,67 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+/// An implementation of [`BellNumber`](mithqalite_base::num::number_theory::traits::BellNumber), a
+/// trait for computing the number of ways to partition a set.
+pub mod bell_number;
+/// Implementations of
+/// [`BinomialCoefficient`](mithqalite_base::num::number_theory::traits::BinomialCoefficient), a
+/// trait for computing the binomial coefficient of two numbers.
+pub mod binomial_coefficient;
+/// The continued-fraction and half-gcd machinery, adopted from FLINT, shared by rational
+/// reconstruction and, in mithqalite-q, the simplest rational in an interval.
+#[doc(hidden)]
+pub mod cfrac_helpers;
+/// Implementations of [`CoprimeWith`](mithqalite_base::num::number_theory::traits::CoprimeWith), a
+/// trait for determining whether two numbers are coprime.
+pub mod coprime_with;
+/// Implementations of [`Factorial`](mithqalite_base::num::number_theory::traits::Factorial),
+/// [`DoubleFactorial`](mithqalite_base::num::number_theory::traits::DoubleFactorial),
+/// [`Multifactorial`](mithqalite_base::num::number_theory::traits::Multifactorial), and
+/// [`Subfactorial`](mithqalite_base::num::number_theory::traits::Subfactorial).
+pub mod factorial;
+/// Implementations of
+/// [`FallingFactorial`](mithqalite_base::num::number_theory::traits::FallingFactorial), a trait for
+/// computing the falling factorial of a number.
+pub mod falling_factorial;
+/// [`Fibonacci`](mithqalite_base::num::number_theory::traits::Fibonacci) and
+/// [`LucasNumber`](mithqalite_base::num::number_theory::traits::LucasNumber), traits for computing
+/// Fibonacci and Lucas numbers.
+pub mod fibonacci;
+/// Implementations of [`Gcd`](mithqalite_base::num::number_theory::traits::Gcd) and
+/// [`GcdAssign`](mithqalite_base::num::number_theory::traits::GcdAssign), traits for computing the
+/// GCD (greatest common divisor) of two numbers.
+pub mod gcd;
+/// Implementations of
+/// [`LegendreSymbol`](mithqalite_base::num::number_theory::traits::LegendreSymbol),
+/// [`JacobiSymbol`](mithqalite_base::num::number_theory::traits::JacobiSymbol), and
+/// [`KroneckerSymbol`](mithqalite_base::num::number_theory::traits::KroneckerSymbol), traits for
+/// computing the Legendre, Jacobi, and Kronecker symbols of two numbers.
+pub mod kronecker_symbol;
+/// A function for computing Landau's function.
+pub mod landau_function;
+/// Implementations of [`Lcm`](mithqalite_base::num::number_theory::traits::Lcm),
+/// [`LcmAssign`](mithqalite_base::num::number_theory::traits::LcmAssign), and
+/// [`CheckedLcm`](mithqalite_base::num::number_theory::traits::CheckedLcm), traits for computing the
+/// LCM (least common multiple) of two numbers.
+pub mod lcm;
+/// An implementation of [`Primorial`](mithqalite_base::num::number_theory::traits::Primorial), a
+/// trait for computing the primorial of a number.
+pub mod primorial;
+/// Implementations of
+/// [`RisingFactorial`](mithqalite_base::num::number_theory::traits::RisingFactorial), a trait for
+/// computing the rising factorial of a number.
+pub mod rising_factorial;
+/// An implementation of [`StirlingNumberOfTheSecondKind`](
+/// mithqalite_base::num::number_theory::traits::StirlingNumberOfTheSecondKind), a trait for
+/// computing Stirling numbers of the second kind.
+pub mod stirling_number_of_the_second_kind;
+/// An implementation of [`UnsignedStirlingNumberOfTheFirstKind`](
+/// mithqalite_base::num::number_theory::traits::UnsignedStirlingNumberOfTheFirstKind), a trait for
+/// computing unsigned Stirling numbers of the first kind.
+pub mod unsigned_stirling_number_of_the_first_kind;

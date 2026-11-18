@@ -1,0 +1,43 @@
+[package]
+name = "mithqalite"
+version = "0.14.0"
+authors = ["Mikhail Hogrefe <mikhailhogrefe@gmail.com>"]
+rust-version.workspace = true
+edition.workspace = true
+description = "Arbitrary-precision arithmetic, with efficient algorithms partially derived from GMP, FLINT, and MPFR."
+readme = "../README.md"
+homepage = "https://github.com/faris0x/Mithqalite"
+repository = "https://github.com/faris0x/Mithqalite"
+license = "LGPL-3.0-only"
+keywords = ["mathematics", "math", "numerics", "bignum"]
+categories = ["mathematics"]
+
+[dependencies]
+mithqalite-base = { version = "0.14.0", default-features = false, path = "../mithqalite-base" }
+mithqalite-nz = { version = "0.14.0", default-features = false, optional = true, path = "../mithqalite-nz" }
+mithqalite-q = { version = "0.14.0", default-features = false, optional = true, path = "../mithqalite-q" }
+mithqalite-float = { version = "0.14.0", default-features = false, optional = true, path = "../mithqalite-float" }
+serde = { version = "1.0.188", optional = true, features = ["derive"] }
+embed-doc-image = { version = "0.1.4", optional = true }
+
+[features]
+default = [ "std", "naturals_and_integers", "rationals", "floats" ]
+# These modify whichever sub-crates are enabled; the `?` keeps them from pulling in a sub-crate
+# that was not asked for. (mithqalite-base is not optional, so it takes no `?`.)
+std = [ "mithqalite-base/std", "mithqalite-nz?/std", "mithqalite-q?/std", "mithqalite-float?/std" ]
+enable_pyo3 = [ "naturals_and_integers", "mithqalite-nz/enable_pyo3" ]
+enable_serde = [ "mithqalite-base/enable_serde", "mithqalite-nz?/enable_serde", "mithqalite-q?/enable_serde", "mithqalite-float?/enable_serde" ]
+random = ["mithqalite-base/random", "mithqalite-nz?/random", "mithqalite-q?/random", "mithqalite-float?/random"]
+32_bit_limbs = ["mithqalite-nz?/32_bit_limbs", "mithqalite-q?/32_bit_limbs", "mithqalite-float?/32_bit_limbs"]
+
+# Each of these builds on the one before it, matching the sub-crates' own dependencies, so that
+# asking for one of them is enough to get a usable type.
+naturals_and_integers = [ "mithqalite-nz" ]
+rationals = [ "naturals_and_integers", "mithqalite-q" ]
+floats = [ "rationals", "mithqalite-float" ]
+
+[package.metadata.docs.rs]
+# docs.rs uses a nightly compiler, so by instructing it to use our `doc-images` feature we
+# ensure that it will render any images that we may have in inner attribute documentation.
+features = ["embed-doc-image", "random"]
+rustdoc-args = [ "--html-in-header", "katex-header.html" ]

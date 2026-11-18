@@ -1,11 +1,11 @@
-"""Generates malachite-base's LaTeX character table from pylatexenc's `uni2latex` map.
+"""Generates mithqalite-base's LaTeX character table from pylatexenc's `uni2latex` map.
 
-The table in `malachite-base/src/chars/latex_table.rs` is generated, not maintained by hand. To
+The table in `mithqalite-base/src/chars/latex_table.rs` is generated, not maintained by hand. To
 regenerate it, check out pylatexenc (https://github.com/phfaist/pylatexenc) and run
 
     python3 generate-latex-table.py <path-to-pylatexenc-checkout>
 
-from the repo root, then run `cargo fmt` and `bash ../superfmt.sh` from `malachite-base`.
+from the repo root, then run `cargo fmt` and `bash ../superfmt.sh` from `mithqalite-base`.
 
 pylatexenc is MIT-licensed; its table is in turn adapted from latexcodec, also MIT. Both notices
 are reproduced in the generated file, as both licenses require.
@@ -104,7 +104,7 @@ for cp, is_math, latex in entries:
 out.append('];')
 text = '\n'.join(out) + '\n'
 
-path = 'malachite-base/src/chars/latex_table.rs'
+path = 'mithqalite-base/src/chars/latex_table.rs'
 open(path, 'w', encoding='utf-8').write(text)
 print(f'wrote {path}')
 print(f'  {len(entries)} entries: {n_math} math, {len(entries) - n_math} text')

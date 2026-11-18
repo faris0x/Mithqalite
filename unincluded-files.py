@@ -19,7 +19,7 @@
 # modules (`mod outer { mod name; }`, as in bin.rs and tests/lib.rs) appended to the base — and
 # followed transitively. A `#[path = "file.rs"] mod name;` declaration resolves to that file,
 # relative to the directory of the declaring file (as it does for a module declared outside an
-# inline module; the FFT backends in malachite-nz include their kernels this way).
+# inline module; the FFT backends in mithqalite-nz include their kernels this way).
 # The `crate_test_mod!` visibility macro wraps a module declaration; its invocations are rewritten
 # to plain `mod name;` before scanning.
 
@@ -28,14 +28,14 @@ import sys
 from pathlib import Path
 
 CRATES = [
-    "malachite-base",
-    "malachite-nz",
-    "malachite-q",
-    "malachite-float",
-    "malachite",
-    "malachite-bigint",
-    "malachite-criterion-bench",
-    "malachite-lints",
+    "mithqalite-base",
+    "mithqalite-nz",
+    "mithqalite-q",
+    "mithqalite-float",
+    "mithqalite",
+    "mithqalite-bigint",
+    "mithqalite-criterion-bench",
+    "mithqalite-lints",
 ]
 
 TARGET_PATH = re.compile(r'^path = "(.*\.rs)"', re.M)

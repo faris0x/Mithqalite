@@ -1,0 +1,34 @@
+[package]
+name = "mithqalite_lints"
+version = "0.1.0"
+description = "Dylint lints enforcing Malachite house conventions"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "f6d310692116e9a527ce6d0b3526c965d9c5d7b9" }
+dylint_linting = "6.0.1"
+
+[dev-dependencies]
+dylint_testing = "6.0.1"
+mithqalite-base = { path = "../mithqalite-base" }
+mithqalite-nz = { path = "../mithqalite-nz" }
+mithqalite-float = { path = "../mithqalite-float" }
+mithqalite-q = { path = "../mithqalite-q" }
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+# Accept the `dylint_lib` cfg that `cargo dylint` sets, which the examples use to show the
+# `#[cfg_attr(dylint_lib = "mithqalite_lints", allow(...))]` opt-out (as in mithqalite-nz).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(dylint_lib, values(any()))"] }
+
+[package.metadata.rust-analyzer]
+rustc_private = true

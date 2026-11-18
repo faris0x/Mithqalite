@@ -1,0 +1,214 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::num::conversion::traits::ToStringBase;
+use mithqalite_base::strings::{ToDebugString, ToLowerHexString};
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_q::test_util::bench::bucketers::{
+    pair_1_rational_bit_bucketer, triple_3_rational_bit_bucketer,
+};
+use mithqalite_q::test_util::generators::{
+    rational_gen, rational_gen_nrm, rational_unsigned_pair_gen_var_10,
+};
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_rational_to_string);
+    register_demo!(runner, demo_rational_to_debug_string);
+    register_demo!(runner, demo_rational_to_string_base);
+    register_demo!(runner, demo_rational_to_string_base_upper);
+    register_demo!(runner, demo_rational_to_binary_string);
+    register_demo!(runner, demo_rational_to_binary_string_with_0b);
+    register_demo!(runner, demo_rational_to_octal_string);
+    register_demo!(runner, demo_rational_to_octal_string_with_0o);
+    register_demo!(runner, demo_rational_to_lower_hex_string);
+    register_demo!(runner, demo_rational_to_lower_hex_string_with_0x);
+    register_demo!(runner, demo_rational_to_upper_hex_string);
+    register_demo!(runner, demo_rational_to_upper_hex_string_with_0x);
+
+    register_bench!(runner, benchmark_rational_to_string_base);
+    register_bench!(
+        runner,
+        benchmark_rational_to_lower_hex_string_library_comparison
+    );
+    register_bench!(runner, benchmark_rational_to_string_library_comparison);
+    register_bench!(
+        runner,
+        benchmark_rational_to_debug_string_library_comparison
+    );
+}
+
+fn demo_rational_to_string(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q}");
+    }
+}
+
+fn demo_rational_to_debug_string(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:?}");
+    }
+}
+
+fn benchmark_rational_to_string_library_comparison(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Rational.to_string()",
+        BenchmarkType::LibraryComparison,
+        rational_gen_nrm().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &triple_3_rational_bit_bucketer("x"),
+        &mut [
+            ("Malachite", &mut |(_, _, x)| no_out!(x.to_string())),
+            ("num", &mut |(x, _, _)| no_out!(x.to_string())),
+            ("rug", &mut |(_, x, _)| no_out!(x.to_string())),
+        ],
+    );
+}
+
+fn benchmark_rational_to_debug_string_library_comparison(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Rational.to_debug_string()",
+        BenchmarkType::LibraryComparison,
+        rational_gen_nrm().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &triple_3_rational_bit_bucketer("x"),
+        &mut [
+            ("Malachite", &mut |(_, _, x)| no_out!(x.to_debug_string())),
+            ("num", &mut |(x, _, _)| no_out!(x.to_debug_string())),
+            ("rug", &mut |(_, x, _)| no_out!(x.to_debug_string())),
+        ],
+    );
+}
+
+fn demo_rational_to_string_base(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, base) in rational_unsigned_pair_gen_var_10()
+        .get(gm, config)
+        .take(limit)
+    {
+        println!("({x}).to_string_base({base}) = {}", x.to_string_base(base));
+    }
+}
+
+fn demo_rational_to_string_base_upper(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, base) in rational_unsigned_pair_gen_var_10()
+        .get(gm, config)
+        .take(limit)
+    {
+        println!(
+            "({x}).to_string_base_upper({base}) = {}",
+            x.to_string_base_upper(base)
+        );
+    }
+}
+
+fn benchmark_rational_to_string_base(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Rational.to_string_base(u8)",
+        BenchmarkType::Single,
+        rational_unsigned_pair_gen_var_10().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &pair_1_rational_bit_bucketer("x"),
+        &mut [("Malachite", &mut |(x, base)| {
+            no_out!(x.to_string_base(base));
+        })],
+    );
+}
+
+fn demo_rational_to_binary_string(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:b}");
+    }
+}
+
+fn demo_rational_to_binary_string_with_0b(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:#b}");
+    }
+}
+
+fn demo_rational_to_octal_string(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:o}");
+    }
+}
+
+fn demo_rational_to_octal_string_with_0o(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:#o}");
+    }
+}
+
+fn demo_rational_to_lower_hex_string(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:x}");
+    }
+}
+
+fn demo_rational_to_lower_hex_string_with_0x(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:#x}");
+    }
+}
+
+fn demo_rational_to_upper_hex_string(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:X}");
+    }
+}
+
+fn demo_rational_to_upper_hex_string_with_0x(gm: GenMode, config: &GenConfig, limit: usize) {
+    for q in rational_gen().get(gm, config).take(limit) {
+        println!("{q:#X}");
+    }
+}
+
+fn benchmark_rational_to_lower_hex_string_library_comparison(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Rational.to_lower_hex_string()",
+        BenchmarkType::LibraryComparison,
+        rational_gen_nrm().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &triple_3_rational_bit_bucketer("x"),
+        &mut [
+            ("Malachite", &mut |(_, _, x)| {
+                no_out!(x.to_lower_hex_string());
+            }),
+            ("num", &mut |(x, _, _)| no_out!(x.to_lower_hex_string())),
+            ("rug", &mut |(_, x, _)| no_out!(x.to_lower_hex_string())),
+        ],
+    );
+}

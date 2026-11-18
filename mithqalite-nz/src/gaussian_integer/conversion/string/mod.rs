@@ -1,0 +1,19 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+/// Implementations of traits for converting strings to
+/// [`GaussianInteger`](crate::gaussian_integer::GaussianInteger)s.
+pub mod from_string;
+/// The implementation of [`ToLatex`](mithqalite_base::strings::latex::ToLatex) for a
+/// [`GaussianInteger`](crate::gaussian_integer::GaussianInteger).
+pub mod latex;
+/// Implementations of traits for converting to strings.
+pub mod to_string;
+/// The implementation of [`ToTypst`](mithqalite_base::strings::typst::ToTypst) for a
+/// [`GaussianInteger`](crate::gaussian_integer::GaussianInteger).
+pub mod typst;

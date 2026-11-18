@@ -1,0 +1,565 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::integer::Integer;
+use crate::natural::conversion::string::to_string::BaseFmtWrapper;
+use alloc::string::{String, ToString};
+use core::fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result, UpperHex, Write};
+use mithqalite_base::num::conversion::string::to_string::{
+    digit_to_display_byte_large, digit_to_display_byte_lower, digit_to_display_byte_upper,
+};
+use mithqalite_base::num::conversion::traits::{Digits, ToStringBase, WrappingFrom};
+use mithqalite_base::strings::{ToBinaryString, ToLowerHexString, ToOctalString, ToUpperHexString};
+use mithqalite_base::vecs::vec_pad_left;
+
+impl Display for BaseFmtWrapper<&Integer> {
+    /// Writes a wrapped [`Integer`] to a string using a specified base.
+    ///
+    /// If the base is greater than 10, lowercase alphabetic letters are used by default. Using the
+    /// `#` flag switches to uppercase letters (it has no effect above base 36, where the two cases
+    /// are distinct digits). Padding with zeros works as usual.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `base` is less than 2 or greater than 62.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_nz::integer::Integer;
+    /// use mithqalite_nz::natural::conversion::string::to_string::BaseFmtWrapper;
+    ///
+    /// let n = Integer::from(-1000000000);
+    /// let x = BaseFmtWrapper::new(&n, 36);
+    /// assert_eq!(format!("{}", x), "-gjdgxs");
+    /// assert_eq!(format!("{:#}", x), "-GJDGXS");
+    /// assert_eq!(format!("{:010}", x), "-000gjdgxs");
+    /// assert_eq!(format!("{:#010}", x), "-000GJDGXS");
+    /// ```
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if !self.x.sign && (f.width().is_some() || f.sign_plus()) {
+            // Let `pad_integral` handle the interaction of the sign with the `+` flag, the
+            // sign-aware zero flag, and fill and alignment.
+            let s = if f.alternate() {
+                self.x
+                    .unsigned_abs_ref()
+                    .to_string_base_upper(u8::wrapping_from(self.base))
+            } else {
+                self.x
+                    .unsigned_abs_ref()
+                    .to_string_base(u8::wrapping_from(self.base))
+            };
+            return f.pad_integral(false, "", &s);
+        }
+        if !self.x.sign {
+            f.write_char('-')?;
+        }
+        Display::fmt(
+            &BaseFmtWrapper::new(self.x.unsigned_abs_ref(), self.base),
+            f,
+        )
+    }
+}
+
+impl Debug for BaseFmtWrapper<&Integer> {
+    /// Writes a wrapped [`Integer`] to a string using a specified base.
+    ///
+    /// If the base is greater than 10, lowercase alphabetic letters are used by default. Using the
+    /// `#` flag switches to uppercase letters (it has no effect above base 36, where the two cases
+    /// are distinct digits). Padding with zeros works as usual.
+    ///
+    /// This is the same as the [`Display::fmt`] implementation.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `base` is less than 2 or greater than 62.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_nz::integer::Integer;
+    /// use mithqalite_nz::natural::conversion::string::to_string::BaseFmtWrapper;
+    ///
+    /// let n = Integer::from(-1000000000);
+    /// let x = BaseFmtWrapper::new(&n, 36);
+    /// assert_eq!(format!("{:?}", x), "-gjdgxs");
+    /// assert_eq!(format!("{:#?}", x), "-GJDGXS");
+    /// assert_eq!(format!("{:010?}", x), "-000gjdgxs");
+    /// assert_eq!(format!("{:#010?}", x), "-000GJDGXS");
+    /// ```
+    #[inline]
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl ToStringBase for Integer {
+    /// Converts an [`Integer`] to a [`String`] using a specified base.
+    ///
+    /// For bases up to 36, digits from 0 to 9 become [`char`]s from `'0'` to `'9'` and digits from
+    /// 10 to 35 become the lowercase [`char`]s `'a'` to `'z'`. For bases from 37 through 62 the
+    /// uppercase and lowercase letters are distinct digits, `'A'` through `'Z'` representing 10
+    /// through 35 and `'a'` through `'z'` representing 36 through 61, as in GMP.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `base` is less than 2 or greater than 62.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::conversion::traits::ToStringBase;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::from(1000).to_string_base(2), "1111101000");
+    /// assert_eq!(Integer::from(1000).to_string_base(10), "1000");
+    /// assert_eq!(Integer::from(1000).to_string_base(36), "rs");
+    ///
+    /// assert_eq!(Integer::from(-1000).to_string_base(2), "-1111101000");
+    /// assert_eq!(Integer::from(-1000).to_string_base(10), "-1000");
+    /// assert_eq!(Integer::from(-1000).to_string_base(36), "-rs");
+    /// // above base 36, the uppercase and lowercase letters are distinct digits
+    /// assert_eq!(Integer::from(-1000).to_string_base(62), "-G8");
+    /// ```
+    fn to_string_base(&self, base: u8) -> String {
+        assert!((2..=62).contains(&base), "base out of range");
+        if *self == 0u32 {
+            "0".to_string()
+        } else {
+            let mut digits = self.unsigned_abs_ref().to_digits_desc(&base);
+            let map = if base > 36 {
+                // above base 36 there is only one alphabet, with both cases as distinct digits
+                digit_to_display_byte_large
+            } else {
+                digit_to_display_byte_lower
+            };
+            for digit in &mut digits {
+                *digit = map(*digit).unwrap();
+            }
+            if *self < 0u32 {
+                vec_pad_left(&mut digits, 1, b'-');
+            }
+            String::from_utf8(digits).unwrap()
+        }
+    }
+
+    /// Converts an [`Integer`] to a [`String`] using a specified base.
+    ///
+    /// For bases up to 36, digits from 0 to 9 become [`char`]s from `'0'` to `'9'` and digits from
+    /// 10 to 35 become the uppercase [`char`]s `'A'` to `'Z'`. For bases from 37 through 62 the
+    /// uppercase and lowercase letters are distinct digits and there is only one alphabet, so the
+    /// result is the same as
+    /// [`to_string_base`](mithqalite_base::num::conversion::traits::ToStringBase::to_string_base)'s.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `base` is less than 2 or greater than 62.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::conversion::traits::ToStringBase;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::from(1000).to_string_base_upper(2), "1111101000");
+    /// assert_eq!(Integer::from(1000).to_string_base_upper(10), "1000");
+    /// assert_eq!(Integer::from(1000).to_string_base_upper(36), "RS");
+    ///
+    /// assert_eq!(Integer::from(-1000).to_string_base_upper(2), "-1111101000");
+    /// assert_eq!(Integer::from(-1000).to_string_base_upper(10), "-1000");
+    /// assert_eq!(Integer::from(-1000).to_string_base_upper(36), "-RS");
+    /// assert_eq!(Integer::from(-1000).to_string_base_upper(62), "-G8");
+    /// ```
+    fn to_string_base_upper(&self, base: u8) -> String {
+        assert!((2..=62).contains(&base), "base out of range");
+        if *self == 0u32 {
+            "0".to_string()
+        } else {
+            let mut digits = self.unsigned_abs_ref().to_digits_desc(&base);
+            let map = if base > 36 {
+                // above base 36 there is only one alphabet, with both cases as distinct digits
+                digit_to_display_byte_large
+            } else {
+                digit_to_display_byte_upper
+            };
+            for digit in &mut digits {
+                *digit = map(*digit).unwrap();
+            }
+            if *self < 0u32 {
+                vec_pad_left(&mut digits, 1, b'-');
+            }
+            String::from_utf8(digits).unwrap()
+        }
+    }
+}
+
+impl Display for Integer {
+    /// Converts an [`Integer`] to a [`String`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::ZERO.to_string(), "0");
+    ///
+    /// assert_eq!(Integer::from(123).to_string(), "123");
+    /// assert_eq!(
+    ///     Integer::from_str("1000000000000").unwrap().to_string(),
+    ///     "1000000000000"
+    /// );
+    /// assert_eq!(format!("{:05}", Integer::from(123)), "00123");
+    ///
+    /// assert_eq!(Integer::from(-123).to_string(), "-123");
+    /// assert_eq!(
+    ///     Integer::from_str("-1000000000000").unwrap().to_string(),
+    ///     "-1000000000000"
+    /// );
+    /// assert_eq!(format!("{:05}", Integer::from(-123)), "-0123");
+    /// ```
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if *self < 0u32 {
+            if f.width().is_some() || f.sign_plus() {
+                // Let `pad_integral` handle the interaction of the sign with the `+` flag, the
+                // sign-aware zero flag, and fill and alignment.
+                return f.pad_integral(false, "", &self.unsigned_abs_ref().to_string());
+            }
+            f.write_char('-')?;
+        }
+        Display::fmt(self.unsigned_abs_ref(), f)
+    }
+}
+
+impl Debug for Integer {
+    /// Converts an [`Integer`] to a [`String`].
+    ///
+    /// This is the same as the [`Display::fmt`] implementation.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::ZERO.to_debug_string(), "0");
+    ///
+    /// assert_eq!(Integer::from(123).to_debug_string(), "123");
+    /// assert_eq!(
+    ///     Integer::from_str("1000000000000")
+    ///         .unwrap()
+    ///         .to_debug_string(),
+    ///     "1000000000000"
+    /// );
+    /// assert_eq!(format!("{:05?}", Integer::from(123)), "00123");
+    ///
+    /// assert_eq!(Integer::from(-123).to_debug_string(), "-123");
+    /// assert_eq!(
+    ///     Integer::from_str("-1000000000000")
+    ///         .unwrap()
+    ///         .to_debug_string(),
+    ///     "-1000000000000"
+    /// );
+    /// assert_eq!(format!("{:05?}", Integer::from(-123)), "-0123");
+    /// ```
+    #[inline]
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl Binary for Integer {
+    /// Converts an [`Integer`] to a binary [`String`].
+    ///
+    /// Using the `#` format flag prepends `"0b"` to the string.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::strings::ToBinaryString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::ZERO.to_binary_string(), "0");
+    /// assert_eq!(Integer::from(123).to_binary_string(), "1111011");
+    /// assert_eq!(
+    ///     Integer::from_str("1000000000000")
+    ///         .unwrap()
+    ///         .to_binary_string(),
+    ///     "1110100011010100101001010001000000000000"
+    /// );
+    /// assert_eq!(format!("{:011b}", Integer::from(123)), "00001111011");
+    /// assert_eq!(Integer::from(-123).to_binary_string(), "-1111011");
+    /// assert_eq!(
+    ///     Integer::from_str("-1000000000000")
+    ///         .unwrap()
+    ///         .to_binary_string(),
+    ///     "-1110100011010100101001010001000000000000"
+    /// );
+    /// assert_eq!(format!("{:011b}", Integer::from(-123)), "-0001111011");
+    ///
+    /// assert_eq!(format!("{:#b}", Integer::ZERO), "0b0");
+    /// assert_eq!(format!("{:#b}", Integer::from(123)), "0b1111011");
+    /// assert_eq!(
+    ///     format!("{:#b}", Integer::from_str("1000000000000").unwrap()),
+    ///     "0b1110100011010100101001010001000000000000"
+    /// );
+    /// assert_eq!(format!("{:#011b}", Integer::from(123)), "0b001111011");
+    /// assert_eq!(format!("{:#b}", Integer::from(-123)), "-0b1111011");
+    /// assert_eq!(
+    ///     format!("{:#b}", Integer::from_str("-1000000000000").unwrap()),
+    ///     "-0b1110100011010100101001010001000000000000"
+    /// );
+    /// assert_eq!(format!("{:#011b}", Integer::from(-123)), "-0b01111011");
+    /// ```
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if *self < 0u32 {
+            if f.width().is_some() || f.sign_plus() {
+                // Let `pad_integral` handle the interaction of the sign with the `+` flag, the
+                // sign-aware zero flag, the `#` prefix, and fill and alignment.
+                return f.pad_integral(false, "0b", &self.unsigned_abs_ref().to_binary_string());
+            }
+            f.write_char('-')?;
+        }
+        Binary::fmt(self.unsigned_abs_ref(), f)
+    }
+}
+
+impl Octal for Integer {
+    /// Converts an [`Integer`] to an octal [`String`].
+    ///
+    /// Using the `#` format flag prepends `"0o"` to the string.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::strings::ToOctalString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::ZERO.to_octal_string(), "0");
+    /// assert_eq!(Integer::from(123).to_octal_string(), "173");
+    /// assert_eq!(
+    ///     Integer::from_str("1000000000000")
+    ///         .unwrap()
+    ///         .to_octal_string(),
+    ///     "16432451210000"
+    /// );
+    /// assert_eq!(format!("{:07o}", Integer::from(123)), "0000173");
+    /// assert_eq!(Integer::from(-123).to_octal_string(), "-173");
+    /// assert_eq!(
+    ///     Integer::from_str("-1000000000000")
+    ///         .unwrap()
+    ///         .to_octal_string(),
+    ///     "-16432451210000"
+    /// );
+    /// assert_eq!(format!("{:07o}", Integer::from(-123)), "-000173");
+    ///
+    /// assert_eq!(format!("{:#o}", Integer::ZERO), "0o0");
+    /// assert_eq!(format!("{:#o}", Integer::from(123)), "0o173");
+    /// assert_eq!(
+    ///     format!("{:#o}", Integer::from_str("1000000000000").unwrap()),
+    ///     "0o16432451210000"
+    /// );
+    /// assert_eq!(format!("{:#07o}", Integer::from(123)), "0o00173");
+    /// assert_eq!(format!("{:#o}", Integer::from(-123)), "-0o173");
+    /// assert_eq!(
+    ///     format!("{:#o}", Integer::from_str("-1000000000000").unwrap()),
+    ///     "-0o16432451210000"
+    /// );
+    /// assert_eq!(format!("{:#07o}", Integer::from(-123)), "-0o0173");
+    /// ```
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if *self < 0u32 {
+            if f.width().is_some() || f.sign_plus() {
+                // Let `pad_integral` handle the interaction of the sign with the `+` flag, the
+                // sign-aware zero flag, the `#` prefix, and fill and alignment.
+                return f.pad_integral(false, "0o", &self.unsigned_abs_ref().to_octal_string());
+            }
+            f.write_char('-')?;
+        }
+        Octal::fmt(self.unsigned_abs_ref(), f)
+    }
+}
+
+impl LowerHex for Integer {
+    /// Converts an [`Integer`] to a hexadecimal [`String`] using lowercase characters.
+    ///
+    /// Using the `#` format flag prepends `"0x"` to the string.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::strings::ToLowerHexString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::ZERO.to_lower_hex_string(), "0");
+    /// assert_eq!(Integer::from(123).to_lower_hex_string(), "7b");
+    /// assert_eq!(
+    ///     Integer::from_str("1000000000000")
+    ///         .unwrap()
+    ///         .to_lower_hex_string(),
+    ///     "e8d4a51000"
+    /// );
+    /// assert_eq!(format!("{:07x}", Integer::from(123)), "000007b");
+    /// assert_eq!(Integer::from(-123).to_lower_hex_string(), "-7b");
+    /// assert_eq!(
+    ///     Integer::from_str("-1000000000000")
+    ///         .unwrap()
+    ///         .to_lower_hex_string(),
+    ///     "-e8d4a51000"
+    /// );
+    /// assert_eq!(format!("{:07x}", Integer::from(-123)), "-00007b");
+    ///
+    /// assert_eq!(format!("{:#x}", Integer::ZERO), "0x0");
+    /// assert_eq!(format!("{:#x}", Integer::from(123)), "0x7b");
+    /// assert_eq!(
+    ///     format!("{:#x}", Integer::from_str("1000000000000").unwrap()),
+    ///     "0xe8d4a51000"
+    /// );
+    /// assert_eq!(format!("{:#07x}", Integer::from(123)), "0x0007b");
+    /// assert_eq!(format!("{:#x}", Integer::from(-123)), "-0x7b");
+    /// assert_eq!(
+    ///     format!("{:#x}", Integer::from_str("-1000000000000").unwrap()),
+    ///     "-0xe8d4a51000"
+    /// );
+    /// assert_eq!(format!("{:#07x}", Integer::from(-123)), "-0x007b");
+    /// ```
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if *self < 0u32 {
+            if f.width().is_some() || f.sign_plus() {
+                // Let `pad_integral` handle the interaction of the sign with the `+` flag, the
+                // sign-aware zero flag, the `#` prefix, and fill and alignment.
+                return f.pad_integral(false, "0x", &self.unsigned_abs_ref().to_lower_hex_string());
+            }
+            f.write_char('-')?;
+        }
+        LowerHex::fmt(self.unsigned_abs_ref(), f)
+    }
+}
+
+impl UpperHex for Integer {
+    /// Converts an [`Integer`] to a hexadecimal [`String`] using uppercase characters.
+    ///
+    /// Using the `#` format flag prepends `"0x"` to the string.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::strings::ToUpperHexString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// assert_eq!(Integer::ZERO.to_upper_hex_string(), "0");
+    /// assert_eq!(Integer::from(123).to_upper_hex_string(), "7B");
+    /// assert_eq!(
+    ///     Integer::from_str("1000000000000")
+    ///         .unwrap()
+    ///         .to_upper_hex_string(),
+    ///     "E8D4A51000"
+    /// );
+    /// assert_eq!(format!("{:07X}", Integer::from(123)), "000007B");
+    /// assert_eq!(Integer::from(-123).to_upper_hex_string(), "-7B");
+    /// assert_eq!(
+    ///     Integer::from_str("-1000000000000")
+    ///         .unwrap()
+    ///         .to_upper_hex_string(),
+    ///     "-E8D4A51000"
+    /// );
+    /// assert_eq!(format!("{:07X}", Integer::from(-123)), "-00007B");
+    ///
+    /// assert_eq!(format!("{:#X}", Integer::ZERO), "0x0");
+    /// assert_eq!(format!("{:#X}", Integer::from(123)), "0x7B");
+    /// assert_eq!(
+    ///     format!("{:#X}", Integer::from_str("1000000000000").unwrap()),
+    ///     "0xE8D4A51000"
+    /// );
+    /// assert_eq!(format!("{:#07X}", Integer::from(123)), "0x0007B");
+    /// assert_eq!(format!("{:#X}", Integer::from(-123)), "-0x7B");
+    /// assert_eq!(
+    ///     format!("{:#X}", Integer::from_str("-1000000000000").unwrap()),
+    ///     "-0xE8D4A51000"
+    /// );
+    /// assert_eq!(format!("{:#07X}", Integer::from(-123)), "-0x007B");
+    /// ```
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if *self < 0u32 {
+            if f.width().is_some() || f.sign_plus() {
+                // Let `pad_integral` handle the interaction of the sign with the `+` flag, the
+                // sign-aware zero flag, the `#` prefix, and fill and alignment.
+                return f.pad_integral(false, "0x", &self.unsigned_abs_ref().to_upper_hex_string());
+            }
+            f.write_char('-')?;
+        }
+        UpperHex::fmt(self.unsigned_abs_ref(), f)
+    }
+}

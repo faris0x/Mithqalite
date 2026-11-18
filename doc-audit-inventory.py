@@ -23,7 +23,7 @@
 import os
 import re
 
-CRATES = ["malachite-base", "malachite-nz", "malachite-q", "malachite-float"]
+CRATES = ["mithqalite-base", "mithqalite-nz", "mithqalite-q", "mithqalite-float"]
 OUT_DIR = "audit"
 
 ITEM_RE = re.compile(

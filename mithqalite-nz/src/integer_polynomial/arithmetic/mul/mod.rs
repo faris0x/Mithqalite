@@ -1,0 +1,406 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the FLINT Library.
+//
+//      Copyright © 2008, 2009 William Hart
+//
+//      Copyright © 2014 Fredrik Johansson
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::integer_polynomial::IntegerPolynomial;
+use crate::integer_polynomial::arithmetic::coefficient::PolynomialCoefficient;
+use crate::integer_polynomial::arithmetic::mul::classical::mul_to_out_classical;
+use crate::integer_polynomial::arithmetic::mul::karatsuba::mul_to_out_karatsuba;
+use crate::integer_polynomial::arithmetic::mul::kronecker::mul_to_out_kronecker;
+use crate::integer_polynomial::arithmetic::mul::schonhage_strassen::*;
+use crate::integer_polynomial::arithmetic::mul::tiny::{mul_to_out_tiny_1, mul_to_out_tiny_2};
+use crate::integer_polynomial::arithmetic::mul_dispatch::{
+    TinyKernel, classical_preferred, fft_preferred, karatsuba_preferred,
+    schonhage_strassen_preferred, tiny_kernel,
+};
+use crate::integer_polynomial::arithmetic::mul_middle::fft::mul_middle_to_out_fft;
+use crate::integer_polynomial::arithmetic::square::square_to_out;
+use crate::integer_vector::arithmetic::max_bits::vec_max_bits;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::mem::take;
+use core::ops::{Mul, MulAssign};
+use core::ptr;
+use mithqalite_base::num::conversion::traits::ExactFrom;
+
+pub mod classical;
+pub mod karatsuba;
+pub mod kronecker;
+pub mod schonhage_strassen;
+pub mod tiny;
+
+// Sets `out` to the coefficients of the product of the polynomials with coefficients `xs` and `ys`,
+// where `xs.len() >= ys.len() >= 1`. `out` must have length `xs.len() + ys.len() - 1`.
+//
+// # Worst-case complexity
+// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+//
+// $M(n, m) = O(n(m + \log n) \log (nm))$
+//
+// where $T$ is time, $M$ is additional memory, $n$ is `xs.len()`, and $m$ is the largest number of
+// significant bits of any element of `xs` or `ys`.
+//
+// This is equivalent to `_fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0, except that it
+// chooses Schönhage–Strassen in a measured window (see `schonhage_strassen_preferred`) rather
+// than FLINT's.
+crate_test_fn! {mul_greater_to_out<C: PolynomialCoefficient>(out: &mut [C], xs: &[C], ys: &[C]) {
+    let len1 = xs.len();
+    let len2 = ys.len();
+    if len2 == 1 {
+        C::vec_mul_scalar_to_out(out, xs, &ys[0]);
+        return;
+    }
+    if ptr::eq(xs, ys) {
+        square_to_out(out, xs);
+        return;
+    }
+    let bits1 = vec_max_bits(xs).0;
+    let bits2 = vec_max_bits(ys).0;
+    let len1 = u64::exact_from(len1);
+    let len2 = u64::exact_from(len2);
+    if fft_preferred(len2, bits1, bits2, 80, 100)
+        && mul_middle_to_out_fft(out, xs, ys, 0, xs.len() + ys.len() - 1)
+    {
+        return;
+    }
+    let half_bits = (bits1 + bits2) >> 1;
+    match tiny_kernel(bits1, bits2, len2, len2 < 40 + half_bits || len1 < 70 + half_bits) {
+        Some(TinyKernel::OneWord) => mul_to_out_tiny_1(out, xs, ys),
+        Some(TinyKernel::TwoWord) => mul_to_out_tiny_2(out, xs, ys),
+        None if classical_preferred(len2, bits1, bits2) => {
+            mul_to_out_classical(out, xs, ys);
+        }
+        None if karatsuba_preferred(len2, bits1, bits2) => {
+            mul_to_out_karatsuba(out, xs, ys);
+        }
+        None if schonhage_strassen_preferred(len1, len2, bits1, bits2, 4097) => {
+            mul_to_out_schonhage_strassen(out, xs, ys);
+        }
+        None => mul_to_out_kronecker(out, xs, ys),
+    }
+}}
+
+// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+pub(crate) fn mul_ref_ref<C: PolynomialCoefficient>(xs: &[C], ys: &[C]) -> Vec<C> {
+    if xs.is_empty() || ys.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![C::ZERO; xs.len() + ys.len() - 1];
+    if xs.len() >= ys.len() {
+        mul_greater_to_out(&mut out, xs, ys);
+    } else {
+        mul_greater_to_out(&mut out, ys, xs);
+    }
+    out
+}
+
+// Multiplies the polynomial with coefficients `xs` by the one with coefficients `ys`. When `ys` is
+// a constant, the product is a scalar multiple of `xs`, computed in place in its `Vec`.
+pub(crate) fn mul_val_ref<C: PolynomialCoefficient>(mut xs: Vec<C>, ys: &[C]) -> Vec<C> {
+    if let [c] = ys {
+        C::vec_mul_scalar_assign(&mut xs, c);
+        xs
+    } else {
+        mul_ref_ref(&xs, ys)
+    }
+}
+
+// Multiplies the polynomial with coefficients `xs` by the one with coefficients `ys`. When either
+// is a constant, the product is computed in place in the other's `Vec`.
+pub(crate) fn mul_val_val<C: PolynomialCoefficient>(xs: Vec<C>, mut ys: Vec<C>) -> Vec<C> {
+    if let [c] = xs.as_slice() {
+        C::vec_mul_scalar_assign(&mut ys, c);
+        ys
+    } else {
+        mul_val_ref(xs, &ys)
+    }
+}
+
+impl Mul<Self> for IntegerPolynomial {
+    type Output = Self;
+
+    /// Multiplies two [`IntegerPolynomial`]s, taking both by value.
+    ///
+    /// $$
+    /// f(p, q) = pq.
+    /// $$
+    ///
+    /// The integers have no zero divisors, so the degree of a product of nonzero polynomials is the
+    /// sum of their degrees.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n(m + \log n) \log (nm))$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is the length of the longer polynomial, and
+    /// $m$ is the largest number of significant bits of any coefficient of either polynomial.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+    ///
+    /// assert_eq!(
+    ///     (IntegerPolynomial::from_str("x^2-3*x+2").unwrap()
+    ///         * IntegerPolynomial::from_str("2*x+5").unwrap())
+    ///     .to_string(),
+    ///     "2*x^3-x^2-11*x+10"
+    /// );
+    /// assert_eq!(
+    ///     (IntegerPolynomial::from_str("x+1").unwrap()
+    ///         * IntegerPolynomial::from_str("x-1").unwrap())
+    ///     .to_string(),
+    ///     "x^2-1"
+    /// );
+    /// assert_eq!(
+    ///     (IntegerPolynomial::from_str("x+1").unwrap() * IntegerPolynomial::ZERO).to_string(),
+    ///     "0"
+    /// );
+    /// ```
+    ///
+    /// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+    #[inline]
+    fn mul(self, other: Self) -> Self {
+        Self {
+            coefficients: mul_val_val(self.coefficients, other.coefficients),
+        }
+    }
+}
+
+impl Mul<&Self> for IntegerPolynomial {
+    type Output = Self;
+
+    /// Multiplies two [`IntegerPolynomial`]s, taking the first by value and the second by
+    /// reference.
+    ///
+    /// $$
+    /// f(p, q) = pq.
+    /// $$
+    ///
+    /// The integers have no zero divisors, so the degree of a product of nonzero polynomials is the
+    /// sum of their degrees.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n(m + \log n) \log (nm))$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is the length of the longer polynomial, and
+    /// $m$ is the largest number of significant bits of any coefficient of either polynomial.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+    ///
+    /// assert_eq!(
+    ///     (IntegerPolynomial::from_str("x^2-3*x+2").unwrap()
+    ///         * &IntegerPolynomial::from_str("2*x+5").unwrap())
+    ///         .to_string(),
+    ///     "2*x^3-x^2-11*x+10"
+    /// );
+    /// assert_eq!(
+    ///     (IntegerPolynomial::from_str("x+1").unwrap()
+    ///         * &IntegerPolynomial::from_str("x-1").unwrap())
+    ///         .to_string(),
+    ///     "x^2-1"
+    /// );
+    /// assert_eq!(
+    ///     (IntegerPolynomial::from_str("x+1").unwrap() * &IntegerPolynomial::ZERO).to_string(),
+    ///     "0"
+    /// );
+    /// ```
+    ///
+    /// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+    #[inline]
+    fn mul(self, other: &Self) -> Self {
+        Self {
+            coefficients: mul_val_ref(self.coefficients, &other.coefficients),
+        }
+    }
+}
+
+impl Mul<IntegerPolynomial> for &IntegerPolynomial {
+    type Output = IntegerPolynomial;
+
+    /// Multiplies two [`IntegerPolynomial`]s, taking the first by reference and the second by
+    /// value.
+    ///
+    /// $$
+    /// f(p, q) = pq.
+    /// $$
+    ///
+    /// The integers have no zero divisors, so the degree of a product of nonzero polynomials is the
+    /// sum of their degrees.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n(m + \log n) \log (nm))$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is the length of the longer polynomial, and
+    /// $m$ is the largest number of significant bits of any coefficient of either polynomial.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+    ///
+    /// assert_eq!(
+    ///     (&IntegerPolynomial::from_str("x^2-3*x+2").unwrap()
+    ///         * IntegerPolynomial::from_str("2*x+5").unwrap())
+    ///     .to_string(),
+    ///     "2*x^3-x^2-11*x+10"
+    /// );
+    /// assert_eq!(
+    ///     (&IntegerPolynomial::from_str("x+1").unwrap()
+    ///         * IntegerPolynomial::from_str("x-1").unwrap())
+    ///     .to_string(),
+    ///     "x^2-1"
+    /// );
+    /// assert_eq!(
+    ///     (&IntegerPolynomial::from_str("x+1").unwrap() * IntegerPolynomial::ZERO).to_string(),
+    ///     "0"
+    /// );
+    /// ```
+    ///
+    /// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+    #[inline]
+    fn mul(self, other: IntegerPolynomial) -> IntegerPolynomial {
+        IntegerPolynomial {
+            coefficients: mul_val_ref(other.coefficients, &self.coefficients),
+        }
+    }
+}
+
+impl Mul<&IntegerPolynomial> for &IntegerPolynomial {
+    type Output = IntegerPolynomial;
+
+    /// Multiplies two [`IntegerPolynomial`]s, taking both by reference.
+    ///
+    /// $$
+    /// f(p, q) = pq.
+    /// $$
+    ///
+    /// The integers have no zero divisors, so the degree of a product of nonzero polynomials is the
+    /// sum of their degrees.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n(m + \log n) \log (nm))$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is the length of the longer polynomial, and
+    /// $m$ is the largest number of significant bits of any coefficient of either polynomial.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+    ///
+    /// assert_eq!(
+    ///     (&IntegerPolynomial::from_str("x^2-3*x+2").unwrap()
+    ///         * &IntegerPolynomial::from_str("2*x+5").unwrap())
+    ///         .to_string(),
+    ///     "2*x^3-x^2-11*x+10"
+    /// );
+    /// assert_eq!(
+    ///     (&IntegerPolynomial::from_str("x+1").unwrap()
+    ///         * &IntegerPolynomial::from_str("x-1").unwrap())
+    ///         .to_string(),
+    ///     "x^2-1"
+    /// );
+    /// assert_eq!(
+    ///     (&IntegerPolynomial::from_str("x+1").unwrap() * &IntegerPolynomial::ZERO).to_string(),
+    ///     "0"
+    /// );
+    /// ```
+    ///
+    /// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+    fn mul(self, other: &IntegerPolynomial) -> IntegerPolynomial {
+        IntegerPolynomial {
+            coefficients: mul_ref_ref(&self.coefficients, &other.coefficients),
+        }
+    }
+}
+
+impl MulAssign<Self> for IntegerPolynomial {
+    /// Multiplies an [`IntegerPolynomial`] by another [`IntegerPolynomial`] in place, taking the
+    /// right-hand side by value.
+    ///
+    /// $$
+    /// p \gets pq.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n(m + \log n) \log (nm))$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is the length of the longer polynomial, and
+    /// $m$ is the largest number of significant bits of any coefficient of either polynomial.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+    ///
+    /// let mut p = IntegerPolynomial::from_str("x^2-3*x+2").unwrap();
+    /// p *= IntegerPolynomial::from_str("2*x+5").unwrap();
+    /// assert_eq!(p.to_string(), "2*x^3-x^2-11*x+10");
+    /// ```
+    ///
+    /// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+    #[inline]
+    fn mul_assign(&mut self, other: Self) {
+        self.coefficients = mul_val_val(take(&mut self.coefficients), other.coefficients);
+    }
+}
+
+impl MulAssign<&Self> for IntegerPolynomial {
+    /// Multiplies an [`IntegerPolynomial`] by another [`IntegerPolynomial`] in place, taking the
+    /// right-hand side by reference.
+    ///
+    /// $$
+    /// p \gets pq.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n^{\log_2 3} m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n(m + \log n) \log (nm))$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is the length of the longer polynomial, and
+    /// $m$ is the largest number of significant bits of any coefficient of either polynomial.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::str::FromStr;
+    /// use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+    ///
+    /// let mut p = IntegerPolynomial::from_str("x^2-3*x+2").unwrap();
+    /// p *= &IntegerPolynomial::from_str("2*x+5").unwrap();
+    /// assert_eq!(p.to_string(), "2*x^3-x^2-11*x+10");
+    /// ```
+    ///
+    /// This is equivalent to `fmpz_poly_mul` from `fmpz_poly/mul.c`, FLINT 3.6.0.
+    #[inline]
+    fn mul_assign(&mut self, other: &Self) {
+        self.coefficients = mul_val_ref(take(&mut self.coefficients), &other.coefficients);
+    }
+}

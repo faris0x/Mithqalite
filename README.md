@@ -19,11 +19,11 @@ Mithqal owns the engine-facing numeric types, complex arithmetic, hypercomplex t
 
 The repository is a Cargo workspace:
 
-- `malachite` re-exports the public numeric types.
-- `malachite-base` provides shared numeric traits and utilities.
-- `malachite-nz` provides natural and integer arithmetic.
-- `malachite-q` provides rational arithmetic.
-- `malachite-float` provides binary floating-point arithmetic.
+- `mithqalite` re-exports the public numeric types.
+- `mithqalite-base` provides shared numeric traits and utilities.
+- `mithqalite-nz` provides natural and integer arithmetic.
+- `mithqalite-q` provides rational arithmetic.
+- `mithqalite-float` provides binary floating-point arithmetic.
 
 The crate names are retained from Malachite for source and dependency compatibility. The project name for this repository is Mithqalite.
 
@@ -37,7 +37,7 @@ cargo test --release --workspace
 The float tests use the `test_build` feature:
 
 ```text
-cargo test --release -p malachite-float --features test_build
+cargo test --release -p mithqalite-float --features test_build
 ```
 
 ## License

@@ -1,0 +1,62 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use core::str::FromStr;
+use mithqalite_base::matrix::Matrix;
+use mithqalite_base::num::basic::unsigneds::PrimitiveUnsigned;
+use mithqalite_base::test_util::generators::unsigned_matrix_gen;
+use mithqalite_base::unsigned_matrix::UnsignedMatrix;
+use mithqalite_q::Rational;
+use mithqalite_q::rational_matrix::RationalMatrix;
+
+#[test]
+fn test_from_unsigned_matrix() {
+    fn test<T: PrimitiveUnsigned>(s: &str)
+    where
+        Rational: From<T>,
+    {
+        let m = RationalMatrix::from(UnsignedMatrix::<T>::from_str(s).unwrap());
+        assert!(m.is_valid());
+        assert_eq!(m.to_string(), s);
+    }
+    test::<u64>("[]_{0,0}");
+    test::<u64>("[]_{0,4}");
+    test::<u64>("[]_{4,0}");
+    test::<u64>("[0]");
+    test::<u64>("[1, 2, 3; 4, 5, 6]");
+    test::<u64>("[1; 2; 3]");
+    // The largest element an `UnsignedMatrix` can hold survives.
+    test::<u64>("[18446744073709551615, 0]");
+    test::<u8>("[255, 1; 0, 7]");
+    test::<u128>("[340282366920938463463374607431768211455]");
+    test::<usize>("[5, 6]");
+}
+
+#[test]
+fn from_unsigned_matrix_properties() {
+    unsigned_matrix_gen().test_properties(|m| {
+        let n = RationalMatrix::from(m.clone());
+        // Converting by reference gives the same thing.
+        assert_eq!(RationalMatrix::from(&m), n);
+        assert!(n.is_valid());
+        // Nothing is lost: the shape, every element, and the written form all survive.
+        assert_eq!((n.height(), n.width()), (m.height(), m.width()));
+        assert_eq!(n.to_string(), m.to_string());
+        assert_eq!(
+            n.elements_ref(),
+            m.elements_ref()
+                .iter()
+                .map(|&x| Rational::from(x))
+                .collect::<Vec<_>>()
+        );
+        // Reading the string back as a `RationalMatrix` gives the same thing.
+        assert_eq!(RationalMatrix::from_str(&m.to_string()).unwrap(), n);
+        // Converting commutes with transposing.
+        assert_eq!(RationalMatrix::from(m.transpose()), n.transpose());
+    });
+}

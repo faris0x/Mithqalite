@@ -1,0 +1,801 @@
+// Copyright © 2026 Steve Shi
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::bigint::BigInt;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::{
+    cmp::Ordering::{Equal, Greater, Less},
+    iter::{Product, Sum},
+    ops::{
+        Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div,
+        DivAssign, Mul, MulAssign, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+    },
+    str::FromStr,
+};
+use mithqalite_base::{
+    num::{
+        arithmetic::traits::{
+            DivExact, DivMod, DivRem, DivRound, DivisibleBy, FloorRoot, Gcd, Lcm, Mod, ModInverse,
+            ModPow, Parity,
+        },
+        basic::traits::{One as _, Zero as _},
+        conversion::traits::{Digits, FromStringBase, PowerOf2Digits, RoundingInto, ToStringBase},
+        logic::traits::{BitAccess, BitIterable, CountOnes, SignificantBits},
+    },
+    rounding_modes::RoundingMode,
+};
+use mithqalite_nz::{integer::Integer, natural::Natural, platform::Limb};
+use num_integer::{Integer as NumInteger, Roots};
+use num_traits::{
+    CheckedAdd, CheckedDiv, CheckedEuclid, CheckedMul, CheckedSub, Euclid, FromPrimitive, Num, One,
+    Pow, Signed, ToPrimitive, Unsigned, Zero,
+};
+use paste::paste;
+
+use crate::{ParseBigIntError, ToBigInt, TryFromBigIntError, U32Digits, U64Digits};
+
+pub trait ToBigUint {
+    fn to_biguint(&self) -> Option<BigUint>;
+}
+
+apply_to_primitives!(impl_primitive_convert{BigUint, _});
+impl_primitive_convert!(BigUint, f32);
+impl_primitive_convert!(BigUint, f64);
+
+#[repr(transparent)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct BigUint(pub(crate) Natural);
+
+apply_to_unsigneds!(forward_from{BigUint, _});
+apply_to_signeds!(forward_try_from{BigUint, _});
+apply_to_primitives!(forward_try_into{BigUint, _});
+
+impl_from!(BigUint, Natural);
+
+forward_binary_self!(BigUint, Add, add);
+forward_binary_self!(BigUint, Sub, sub);
+forward_binary_self!(BigUint, Mul, mul);
+forward_binary_self!(BigUint, Div, div);
+forward_binary_self!(BigUint, Rem, rem);
+forward_binary_self!(BigUint, BitAnd, bitand);
+forward_binary_self!(BigUint, BitOr, bitor);
+forward_binary_self!(BigUint, BitXor, bitxor);
+
+forward_assign_self!(BigUint, AddAssign, add_assign);
+forward_assign_self!(BigUint, SubAssign, sub_assign);
+forward_assign_self!(BigUint, MulAssign, mul_assign);
+forward_assign_self!(BigUint, DivAssign, div_assign);
+forward_assign_self!(BigUint, RemAssign, rem_assign);
+forward_assign_self!(BigUint, BitAndAssign, bitand_assign);
+forward_assign_self!(BigUint, BitOrAssign, bitor_assign);
+forward_assign_self!(BigUint, BitXorAssign, bitxor_assign);
+
+forward_pow_biguint!(BigUint);
+
+apply_to_unsigneds!(forward_binary_right_primitive_into{BigUint, _, Add, add});
+apply_to_unsigneds!(forward_binary_right_primitive_into{BigUint, _, Sub, sub});
+apply_to_unsigneds!(forward_binary_right_primitive_into{BigUint, _, Mul, mul});
+apply_to_unsigneds!(forward_binary_right_primitive_into{BigUint, _, Div, div});
+apply_to_unsigneds!(forward_binary_right_primitive_into{BigUint, _, Rem, rem});
+
+apply_to_unsigneds!(forward_binary_left_primitive_into{_, BigUint, Add, add});
+apply_to_unsigneds!(forward_binary_left_primitive_into{_, BigUint, Sub, sub});
+apply_to_unsigneds!(forward_binary_left_primitive_into{_, BigUint, Mul, mul});
+apply_to_unsigneds!(forward_binary_left_primitive_into{_, BigUint, Div, div});
+apply_to_unsigneds!(forward_binary_left_primitive_into{_, BigUint, Rem, rem});
+
+apply_to_primitives!(forward_binary_right_primitive{BigUint, _, Shl, shl});
+apply_to_primitives!(forward_binary_right_primitive{BigUint, _, Shr, shr});
+
+apply_to_unsigneds!(forward_assign_primitive_into{BigUint, _, AddAssign, add_assign});
+apply_to_unsigneds!(forward_assign_primitive_into{BigUint, _, SubAssign, sub_assign});
+apply_to_unsigneds!(forward_assign_primitive_into{BigUint, _, MulAssign, mul_assign});
+apply_to_unsigneds!(forward_assign_primitive_into{BigUint, _, DivAssign, div_assign});
+apply_to_unsigneds!(forward_assign_primitive_into{BigUint, _, RemAssign, rem_assign});
+
+apply_to_primitives!(forward_assign_primitive{BigUint, _, ShlAssign, shl_assign});
+apply_to_primitives!(forward_assign_primitive{BigUint, _, ShrAssign, shr_assign});
+
+apply_to_unsigneds!(forward_pow_primitive{BigUint, _});
+
+impl_product_iter_type!(BigUint);
+impl_sum_iter_type!(BigUint);
+
+forward_fmt!(BigUint, Debug, Display, Binary, Octal, LowerHex, UpperHex);
+
+impl CheckedAdd for BigUint {
+    #[inline]
+    fn checked_add(&self, v: &Self) -> Option<Self> {
+        Some(self.add(v))
+    }
+}
+
+impl CheckedSub for BigUint {
+    #[inline]
+    fn checked_sub(&self, v: &Self) -> Option<Self> {
+        match self.cmp(v) {
+            Less => None,
+            Equal => Some(Self::zero()),
+            Greater => Some(self.sub(v)),
+        }
+    }
+}
+
+impl CheckedMul for BigUint {
+    #[inline]
+    fn checked_mul(&self, v: &Self) -> Option<Self> {
+        Some(self.mul(v))
+    }
+}
+
+impl CheckedDiv for BigUint {
+    #[inline]
+    fn checked_div(&self, v: &Self) -> Option<Self> {
+        (!v.is_zero()).then(|| self.div(v))
+    }
+}
+
+impl ToBigUint for BigUint {
+    #[inline]
+    fn to_biguint(&self) -> Option<BigUint> {
+        Some(self.clone())
+    }
+}
+
+impl ToBigInt for BigUint {
+    #[inline]
+    fn to_bigint(&self) -> Option<crate::BigInt> {
+        Some(Integer::from(&self.0).into())
+    }
+}
+
+impl ToPrimitive for BigUint {
+    apply_to_primitives!(impl_to_primitive_fn_try_into{_});
+    impl_to_primitive_fn_float!(f32);
+    impl_to_primitive_fn_float!(f64);
+}
+
+impl FromPrimitive for BigUint {
+    apply_to_signeds!(impl_from_primitive_fn_try_from{_});
+    apply_to_unsigneds!(impl_from_primitive_fn_infallible{_});
+    impl_from_primitive_fn_float!(f32);
+    impl_from_primitive_fn_float!(f64);
+}
+
+impl Zero for BigUint {
+    #[inline]
+    fn zero() -> Self {
+        Self(Natural::ZERO)
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        *self == Self::zero()
+    }
+}
+
+impl One for BigUint {
+    #[inline]
+    fn one() -> Self {
+        Self(Natural::ONE)
+    }
+}
+
+impl Unsigned for BigUint {}
+
+impl Num for BigUint {
+    type FromStrRadixErr = ParseBigIntError;
+
+    fn from_str_radix(s: &str, radix: u32) -> Result<Self, Self::FromStrRadixErr> {
+        let mut s = s;
+        if s.starts_with('+') {
+            let tail = &s[1..];
+            if !tail.starts_with('+') {
+                s = tail;
+            }
+        }
+
+        // fast path
+        if let Some(val) = Natural::from_string_base(radix as u8, s) {
+            return Ok(val.into());
+        }
+
+        if s.is_empty() {
+            return Err(ParseBigIntError::empty());
+        }
+
+        if s.starts_with('_') {
+            // Must lead with a real digit!
+            return Err(ParseBigIntError::invalid());
+        }
+
+        let v: Vec<u8> = s.bytes().filter(|&x| x != b'_').collect();
+        let s = core::str::from_utf8(v.as_slice()).map_err(|_| ParseBigIntError::invalid())?;
+        Natural::from_string_base(radix as u8, s)
+            .map(Self)
+            .ok_or_else(ParseBigIntError::invalid)
+    }
+}
+
+impl num_integer::Integer for BigUint {
+    #[inline]
+    fn div_floor(&self, other: &Self) -> Self {
+        (&self.0).div_round(&other.0, RoundingMode::Floor).0.into()
+    }
+
+    #[inline]
+    fn mod_floor(&self, other: &Self) -> Self {
+        (&self.0).mod_op(&other.0).into()
+    }
+
+    #[inline]
+    fn gcd(&self, other: &Self) -> Self {
+        (&self.0).gcd(&other.0).into()
+    }
+
+    #[inline]
+    fn lcm(&self, other: &Self) -> Self {
+        (&self.0).lcm(&other.0).into()
+    }
+
+    #[inline]
+    fn divides(&self, other: &Self) -> bool {
+        Self::is_multiple_of(self, other)
+    }
+
+    #[inline]
+    fn is_multiple_of(&self, other: &Self) -> bool {
+        (&self.0).divisible_by(&other.0)
+    }
+
+    #[inline]
+    fn is_even(&self) -> bool {
+        self.0.even()
+    }
+
+    #[inline]
+    fn is_odd(&self) -> bool {
+        self.0.odd()
+    }
+
+    #[inline]
+    fn div_rem(&self, other: &Self) -> (Self, Self) {
+        let (div, rem) = (&self.0).div_rem(&other.0);
+        (div.into(), rem.into())
+    }
+
+    #[inline]
+    fn div_mod_floor(&self, other: &Self) -> (Self, Self) {
+        let (div, rem) = (&self.0).div_mod(&other.0);
+        (div.into(), rem.into())
+    }
+
+    #[inline]
+    fn div_ceil(&self, other: &Self) -> Self {
+        (&self.0)
+            .div_round(&other.0, RoundingMode::Ceiling)
+            .0
+            .into()
+    }
+
+    #[inline]
+    fn gcd_lcm(&self, other: &Self) -> (Self, Self) {
+        if self.is_zero() || other.is_zero() {
+            return (self.gcd(other), Self::zero());
+        }
+        let gcd = (&self.0).gcd(&other.0);
+        let lcm = (&self.0).div_exact(&gcd) * &other.0;
+        (gcd.into(), lcm.into())
+    }
+
+    #[inline]
+    fn next_multiple_of(&self, other: &Self) -> Self {
+        let rem = (&self.0).mod_op(&other.0);
+        if rem == 0u32 {
+            self.clone()
+        } else {
+            Self(&self.0 + &other.0 - rem)
+        }
+    }
+
+    #[inline]
+    fn prev_multiple_of(&self, other: &Self) -> Self {
+        Self(&self.0 - (&self.0).mod_op(&other.0))
+    }
+
+    #[inline]
+    fn dec(&mut self) {
+        self.0 -= Natural::ONE;
+    }
+
+    #[inline]
+    fn inc(&mut self) {
+        self.0 += Natural::ONE;
+    }
+}
+
+impl Roots for BigUint {
+    #[inline]
+    fn nth_root(&self, n: u32) -> Self {
+        (&self.0).floor_root(u64::from(n)).into()
+    }
+}
+
+impl FromStr for BigUint {
+    type Err = ParseBigIntError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_str_radix(s, 10)
+    }
+}
+
+impl BigUint {
+    // TODO consider passing &[u32] instead (breaking change)
+    #[allow(clippy::needless_pass_by_value)]
+    #[inline]
+    pub fn new(digits: Vec<u32>) -> Self {
+        Self::from_slice(digits.as_slice())
+    }
+
+    #[inline]
+    pub fn from_slice(slice: &[u32]) -> Self {
+        let mut uint = Self::zero();
+        uint.assign_from_slice(slice);
+        uint
+    }
+
+    #[inline]
+    pub fn assign_from_slice(&mut self, slice: &[u32]) {
+        // SAFETY: &[u32] cannot have any digit greater than 2^32
+        self.0 = unsafe {
+            Natural::from_power_of_2_digits_asc(32, slice.iter().copied()).unwrap_unchecked()
+        };
+    }
+
+    #[inline]
+    pub fn from_bytes_be(bytes: &[u8]) -> Self {
+        // SAFETY: &[u8] cannot have any digit greater than 2^8
+        Self(unsafe {
+            Natural::from_power_of_2_digits_desc(8, bytes.iter().copied()).unwrap_unchecked()
+        })
+    }
+
+    #[inline]
+    pub fn from_bytes_le(bytes: &[u8]) -> Self {
+        // SAFETY: &[u8] cannot have any digit greater than 2^8
+        Self(unsafe {
+            Natural::from_power_of_2_digits_asc(8, bytes.iter().copied()).unwrap_unchecked()
+        })
+    }
+
+    #[inline]
+    pub fn parse_bytes(bytes: &[u8], radix: u32) -> Option<Self> {
+        let s = core::str::from_utf8(bytes).ok()?;
+        Self::from_str_radix(s, radix).ok()
+    }
+
+    #[inline]
+    pub fn from_radix_be(bytes: &[u8], radix: u32) -> Option<Self> {
+        if radix == 256 {
+            Some(Self::from_bytes_be(bytes))
+        } else {
+            Natural::from_digits_desc(&(radix as u8), bytes.iter().copied()).map(Self)
+        }
+    }
+
+    #[inline]
+    pub fn from_radix_le(bytes: &[u8], radix: u32) -> Option<Self> {
+        if radix == 256 {
+            Some(Self::from_bytes_le(bytes))
+        } else {
+            Natural::from_digits_asc(&(radix as u8), bytes.iter().copied()).map(Self)
+        }
+    }
+
+    #[inline]
+    pub fn to_bytes_be(&self) -> Vec<u8> {
+        self.0.to_power_of_2_digits_desc(8)
+    }
+
+    #[inline]
+    pub fn to_bytes_le(&self) -> Vec<u8> {
+        self.0.to_power_of_2_digits_asc(8)
+    }
+
+    #[inline]
+    pub fn to_u32_digits(&self) -> Vec<u32> {
+        self.0.to_power_of_2_digits_asc(32)
+    }
+
+    #[inline]
+    pub fn to_u64_digits(&self) -> Vec<u64> {
+        self.0.to_limbs_asc()
+    }
+
+    #[inline]
+    pub fn iter_u32_digits(&self) -> U32Digits<'_> {
+        U32Digits::new(self.0.limbs())
+    }
+
+    #[inline]
+    pub fn iter_u64_digits(&self) -> U64Digits<'_> {
+        U64Digits::new(self.0.limbs())
+    }
+
+    #[inline]
+    pub fn to_str_radix(&self, radix: u32) -> String {
+        self.0.to_string_base(radix as u8)
+    }
+
+    #[inline]
+    pub fn to_radix_be(&self, radix: u32) -> Vec<u8> {
+        debug_assert!(radix <= 256);
+        if radix == 256 {
+            self.to_bytes_be()
+        } else {
+            self.0.to_digits_desc(&(radix as u8))
+        }
+    }
+
+    #[inline]
+    pub fn to_radix_le(&self, radix: u32) -> Vec<u8> {
+        debug_assert!(radix <= 256);
+        if radix == 256 {
+            self.to_bytes_le()
+        } else {
+            self.0.to_digits_asc(&(radix as u8))
+        }
+    }
+
+    #[inline]
+    pub fn bits(&self) -> u64 {
+        self.0.significant_bits()
+    }
+
+    #[inline]
+    pub fn pow(&self, exponent: u32) -> Self {
+        Pow::pow(self, exponent)
+    }
+
+    #[inline]
+    pub fn modpow(&self, exponent: &Self, modulus: &Self) -> Self {
+        if self >= modulus {
+            let x = self % modulus;
+            x.0.mod_pow(&exponent.0, &modulus.0).into()
+        } else {
+            (&self.0).mod_pow(&exponent.0, &modulus.0).into()
+        }
+    }
+
+    /// Returns the truncated principal square root of `self` -- see [`num_integer::Roots::sqrt`].
+    #[inline]
+    pub fn sqrt(&self) -> Self {
+        Roots::sqrt(self)
+    }
+
+    #[inline]
+    pub fn cbrt(&self) -> Self {
+        Roots::cbrt(self)
+    }
+
+    #[inline]
+    pub fn nth_root(&self, n: u32) -> Self {
+        Roots::nth_root(self, n)
+    }
+
+    #[inline]
+    pub fn trailing_zeros(&self) -> Option<u64> {
+        self.0.trailing_zeros()
+    }
+
+    #[inline]
+    pub fn trailing_ones(&self) -> u64 {
+        self.0.bits().take_while(|&x| x).count() as u64
+    }
+
+    #[inline]
+    pub fn count_ones(&self) -> u64 {
+        self.0.count_ones()
+    }
+
+    #[inline]
+    pub fn bit(&self, bit: u64) -> bool {
+        self.0.get_bit(bit)
+    }
+
+    #[inline]
+    pub fn set_bit(&mut self, bit: u64, value: bool) {
+        if value {
+            self.0.set_bit(bit);
+        } else {
+            self.0.clear_bit(bit);
+        }
+    }
+}
+
+impl BigUint {
+    /// Creates a constant [`BigUint`] from a primitive [`u32`] value.
+    ///
+    /// Non-`const` callers should use [`From<u32>`] instead.
+    #[inline]
+    pub const fn new_const(n: u32) -> Self {
+        Self(Natural::const_from(n as Limb))
+    }
+
+    /// Returns the modular multiplicative inverse of `self` modulo `modulus`, or `None` if no
+    /// inverse exists.
+    ///
+    /// # Panics
+    /// Panics if `modulus` is zero.
+    pub fn modinv(&self, modulus: &Self) -> Option<Self> {
+        assert!(
+            !modulus.is_zero(),
+            "attempt to calculate with zero modulus!"
+        );
+        if modulus.is_one() {
+            return Some(Self::zero());
+        }
+        // Malachite's `mod_inverse` wants an input that is already reduced, and panics on zero,
+        // where a zero residue simply has no inverse.
+        let residue = &self.0 % &modulus.0;
+        if residue == 0u32 {
+            return None;
+        }
+        residue.mod_inverse(&modulus.0).map(BigUint)
+    }
+}
+
+impl num_traits::ConstZero for BigUint {
+    const ZERO: Self = Self::new_const(0);
+}
+
+impl num_traits::ConstOne for BigUint {
+    const ONE: Self = Self::new_const(1);
+}
+
+impl From<bool> for BigUint {
+    #[inline]
+    fn from(x: bool) -> Self {
+        if x { Self::one() } else { Self::zero() }
+    }
+}
+
+impl TryFrom<&BigInt> for BigUint {
+    type Error = TryFromBigIntError<()>;
+
+    #[inline]
+    fn try_from(x: &BigInt) -> Result<Self, Self::Error> {
+        x.to_biguint().ok_or_else(|| TryFromBigIntError::new(()))
+    }
+}
+
+impl TryFrom<BigInt> for BigUint {
+    type Error = TryFromBigIntError<BigInt>;
+
+    #[inline]
+    fn try_from(x: BigInt) -> Result<Self, Self::Error> {
+        if x.is_negative() {
+            Err(TryFromBigIntError::new(x))
+        } else {
+            // just checked that it is not negative
+            Ok(x.into_biguint().unwrap())
+        }
+    }
+}
+
+impl Euclid for BigUint {
+    #[inline]
+    fn div_euclid(&self, v: &Self) -> Self {
+        // trivially the same as regular division, since neither operand is negative
+        self / v
+    }
+
+    #[inline]
+    fn rem_euclid(&self, v: &Self) -> Self {
+        // trivially the same as the regular remainder
+        self % v
+    }
+
+    #[inline]
+    fn div_rem_euclid(&self, v: &Self) -> (Self, Self) {
+        self.div_rem(v)
+    }
+}
+
+impl CheckedEuclid for BigUint {
+    #[inline]
+    fn checked_div_euclid(&self, v: &Self) -> Option<Self> {
+        if v.is_zero() {
+            return None;
+        }
+        Some(self.div_euclid(v))
+    }
+
+    #[inline]
+    fn checked_rem_euclid(&self, v: &Self) -> Option<Self> {
+        if v.is_zero() {
+            return None;
+        }
+        Some(self.rem_euclid(v))
+    }
+
+    #[inline]
+    fn checked_div_rem_euclid(&self, v: &Self) -> Option<(Self, Self)> {
+        if v.is_zero() {
+            return None;
+        }
+        Some(self.div_rem_euclid(v))
+    }
+}
+
+impl num_traits::FromBytes for BigUint {
+    type Bytes = [u8];
+
+    #[inline]
+    fn from_be_bytes(bytes: &Self::Bytes) -> Self {
+        Self::from_bytes_be(bytes)
+    }
+
+    #[inline]
+    fn from_le_bytes(bytes: &Self::Bytes) -> Self {
+        Self::from_bytes_le(bytes)
+    }
+}
+
+impl num_traits::ToBytes for BigUint {
+    type Bytes = Vec<u8>;
+
+    #[inline]
+    fn to_be_bytes(&self) -> Self::Bytes {
+        self.to_bytes_be()
+    }
+
+    #[inline]
+    fn to_le_bytes(&self) -> Self::Bytes {
+        self.to_bytes_le()
+    }
+}
+
+impl num_traits::bounds::LowerBounded for BigUint {
+    #[inline]
+    fn min_value() -> Self {
+        Self::zero()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use alloc::format;
+
+    #[test]
+    fn test_from_string_base() {
+        assert!(BigUint::from_str_radix("1000000000000000111111100112abcdefg", 16).is_err());
+    }
+
+    #[test]
+    fn test_display_biguint() {
+        let x = BigUint::from_str_radix("1234567890", 10).unwrap();
+        assert_eq!(format!("{x}"), "1234567890");
+    }
+
+    #[test]
+    fn test_to_f64() {
+        use num_traits::ToPrimitive;
+
+        let test_cases = [
+            "123456789012345678901234567890",
+            "999999999999999999999999999999",
+            "340282366920938463463374607431768211455",
+            "12345678901234567890123456789012345678901234567890",
+            "1208925819614629174706176",
+            "1329227995784915872903807060280344576",
+            "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999\
+            99999999999999999999999999999999999999999999999999999999999999999999999999999999999999\
+            99999999999999999999999999999999999999999999999999999999999999999999999999999999999999\
+            9999999999999999999999999999999999999999999999999999",
+        ];
+
+        for test_str in &test_cases {
+            let malachite_val = BigUint::from_str(test_str).unwrap();
+            let num_bigint_val = num_bigint::BigUint::from_str(test_str).unwrap();
+
+            assert_eq!(
+                malachite_val.to_f64(),
+                num_bigint_val.to_f64(),
+                "to_f64 mismatch for {test_str}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_to_f32() {
+        use num_traits::ToPrimitive;
+
+        let test_cases = [
+            "12345678901234567890",
+            "999999999999999999999999",
+            "340282366920938463463374607431768211455",
+        ];
+
+        for test_str in &test_cases {
+            let malachite_val = BigUint::from_str(test_str).unwrap();
+            let num_bigint_val = num_bigint::BigUint::from_str(test_str).unwrap();
+
+            assert_eq!(
+                malachite_val.to_f32(),
+                num_bigint_val.to_f32(),
+                "to_f32 mismatch for {test_str}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_to_u64() {
+        use num_traits::ToPrimitive;
+
+        let test_cases = ["0", "123", "18446744073709551615", "18446744073709551616"];
+
+        for test_str in &test_cases {
+            let malachite_val = BigUint::from_str(test_str).unwrap();
+            let num_bigint_val = num_bigint::BigUint::from_str(test_str).unwrap();
+
+            assert_eq!(
+                malachite_val.to_u64(),
+                num_bigint_val.to_u64(),
+                "to_u64 mismatch for {test_str}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_arithmetic() {
+        let test_cases = [
+            ("123456789", "987654321"),
+            ("999999999999999999", "1"),
+            ("1000000000000000000", "999999999999999999"),
+        ];
+
+        for (a_str, b_str) in &test_cases {
+            let ma = BigUint::from_str(a_str).unwrap();
+            let mb = BigUint::from_str(b_str).unwrap();
+            let na = num_bigint::BigUint::from_str(a_str).unwrap();
+            let nb = num_bigint::BigUint::from_str(b_str).unwrap();
+
+            assert_eq!((&ma + &mb).to_string(), (&na + &nb).to_string(), "add");
+            assert_eq!((&ma * &mb).to_string(), (&na * &nb).to_string(), "mul");
+            if ma >= mb {
+                assert_eq!((&ma - &mb).to_string(), (&na - &nb).to_string(), "sub");
+            }
+            if *b_str != "0" {
+                assert_eq!((&ma / &mb).to_string(), (&na / &nb).to_string(), "div");
+                assert_eq!((&ma % &mb).to_string(), (&na % &nb).to_string(), "rem");
+            }
+        }
+    }
+
+    #[test]
+    fn test_pow() {
+        use num_traits::Pow;
+
+        let test_cases = [("2", 10u32), ("10", 20u32), ("123", 4u32)];
+
+        for (base_str, exp) in &test_cases {
+            let ma = BigUint::from_str(base_str).unwrap();
+            let na = num_bigint::BigUint::from_str(base_str).unwrap();
+
+            assert_eq!(
+                ma.pow(*exp).to_string(),
+                na.pow(*exp).to_string(),
+                "pow for {base_str}^{exp}",
+            );
+        }
+    }
+}

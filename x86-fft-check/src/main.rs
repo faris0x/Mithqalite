@@ -9,18 +9,18 @@
 //! Exercises the FFT multiplication and checks it against products assembled only from
 //! multiplications below the FFT threshold, printing a digest of every result.
 //!
-//! The point is the AVX2 instantiation of the FFT (`malachite-nz/src/natural/arithmetic/mul/fft/`),
+//! The point is the AVX2 instantiation of the FFT (`mithqalite-nz/src/natural/arithmetic/mul/fft/`),
 //! which an Apple Silicon machine can only run under emulation: `x86-fft-check.sh` builds this for
 //! `x86_64-unknown-linux-musl`, runs it in an amd64 container under QEMU, and compares the output
 //! with the native run. The first line says which kernels ran. `quick` as the only argument skips
 //! the larger cases.
 
-use malachite_base::num::arithmetic::traits::Square;
-use malachite_base::num::logic::traits::SignificantBits;
-use malachite_base::polynomial::Polynomial;
-use malachite_nz::integer::Integer;
-use malachite_nz::integer_polynomial::IntegerPolynomial;
-use malachite_nz::natural::Natural;
+use mithqalite_base::num::arithmetic::traits::Square;
+use mithqalite_base::num::logic::traits::SignificantBits;
+use mithqalite_base::polynomial::Polynomial;
+use mithqalite_nz::integer::Integer;
+use mithqalite_nz::integer_polynomial::IntegerPolynomial;
+use mithqalite_nz::natural::Natural;
 use std::time::Instant;
 
 // Below the FFT threshold (389 limbs), so chunk products never take the FFT path.

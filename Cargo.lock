@@ -1492,122 +1492,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
-name = "malachite"
-version = "0.14.0"
-dependencies = [
- "embed-doc-image",
- "malachite-base",
- "malachite-float",
- "malachite-nz",
- "malachite-q",
- "serde",
-]
-
-[[package]]
-name = "malachite-base"
-version = "0.14.0"
-dependencies = [
- "clap",
- "getrandom 0.2.17",
- "gnuplot",
- "hashbrown 0.16.1",
- "itertools 0.14.0",
- "libm",
- "malachite-base",
- "maplit",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
- "ryu",
- "serde",
- "serde_json",
- "sha3",
- "time",
- "typst",
- "typst-as-lib",
- "typst-assets",
- "typst-layout",
- "walkdir",
-]
-
-[[package]]
-name = "malachite-bigint"
-version = "0.14.0"
-dependencies = [
- "arbitrary",
- "malachite-base",
- "malachite-nz",
- "num-bigint",
- "num-integer",
- "num-traits",
- "paste",
- "quickcheck",
- "rand 0.8.8",
- "serde",
-]
-
-[[package]]
-name = "malachite-criterion-bench"
-version = "0.14.0"
-dependencies = [
- "criterion",
- "malachite-base",
- "malachite-nz",
- "num",
- "rug",
-]
-
-[[package]]
-name = "malachite-float"
-version = "0.14.0"
-dependencies = [
- "gmp-mpfr-sys",
- "itertools 0.14.0",
- "malachite-base",
- "malachite-float",
- "malachite-nz",
- "malachite-q",
- "num",
- "rug",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "malachite-nz"
-version = "0.14.0"
-dependencies = [
- "bytemuck",
- "embed-doc-image",
- "indoc",
- "itertools 0.14.0",
- "libm",
- "malachite-base",
- "malachite-nz",
- "num",
- "pyo3",
- "pyo3-build-config",
- "rug",
- "serde",
- "serde_json",
- "wide",
-]
-
-[[package]]
-name = "malachite-q"
-version = "0.14.0"
-dependencies = [
- "itertools 0.14.0",
- "libm",
- "malachite-base",
- "malachite-nz",
- "malachite-q",
- "num",
- "rug",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1637,6 +1521,122 @@ checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "mithqalite"
+version = "0.14.0"
+dependencies = [
+ "embed-doc-image",
+ "mithqalite-base",
+ "mithqalite-float",
+ "mithqalite-nz",
+ "mithqalite-q",
+ "serde",
+]
+
+[[package]]
+name = "mithqalite-base"
+version = "0.14.0"
+dependencies = [
+ "clap",
+ "getrandom 0.2.17",
+ "gnuplot",
+ "hashbrown 0.16.1",
+ "itertools 0.14.0",
+ "libm",
+ "maplit",
+ "mithqalite-base",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "ryu",
+ "serde",
+ "serde_json",
+ "sha3",
+ "time",
+ "typst",
+ "typst-as-lib",
+ "typst-assets",
+ "typst-layout",
+ "walkdir",
+]
+
+[[package]]
+name = "mithqalite-bigint"
+version = "0.14.0"
+dependencies = [
+ "arbitrary",
+ "mithqalite-base",
+ "mithqalite-nz",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "paste",
+ "quickcheck",
+ "rand 0.8.8",
+ "serde",
+]
+
+[[package]]
+name = "mithqalite-criterion-bench"
+version = "0.14.0"
+dependencies = [
+ "criterion",
+ "mithqalite-base",
+ "mithqalite-nz",
+ "num",
+ "rug",
+]
+
+[[package]]
+name = "mithqalite-float"
+version = "0.14.0"
+dependencies = [
+ "gmp-mpfr-sys",
+ "itertools 0.14.0",
+ "mithqalite-base",
+ "mithqalite-float",
+ "mithqalite-nz",
+ "mithqalite-q",
+ "num",
+ "rug",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mithqalite-nz"
+version = "0.14.0"
+dependencies = [
+ "bytemuck",
+ "embed-doc-image",
+ "indoc",
+ "itertools 0.14.0",
+ "libm",
+ "mithqalite-base",
+ "mithqalite-nz",
+ "num",
+ "pyo3",
+ "pyo3-build-config",
+ "rug",
+ "serde",
+ "serde_json",
+ "wide",
+]
+
+[[package]]
+name = "mithqalite-q"
+version = "0.14.0"
+dependencies = [
+ "itertools 0.14.0",
+ "libm",
+ "mithqalite-base",
+ "mithqalite-nz",
+ "mithqalite-q",
+ "num",
+ "rug",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

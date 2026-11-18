@@ -1,0 +1,53 @@
+[package]
+name = "mithqalite-q"
+version = "0.14.0"
+authors = ["Mikhail Hogrefe <mikhailhogrefe@gmail.com>"]
+rust-version.workspace = true
+edition.workspace = true
+description = "The arbitrary-precision type Rational, with efficient algorithms partially derived from GMP and FLINT."
+readme = "README.md"
+homepage = "https://github.com/faris0x/Mithqalite"
+repository = "https://github.com/faris0x/Mithqalite"
+license = "LGPL-3.0-only"
+keywords = ["mathematics", "math", "numerics", "bignum"]
+categories = ["mathematics"]
+
+[lib]
+name = "mithqalite_q"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mithqalite_q_main"
+path = "src/bin.rs"
+
+[dependencies]
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+libm = { version = "0.2.16", default-features = false }
+mithqalite-base = { version = "0.14.0", default-features = false, path = "../mithqalite-base" }
+mithqalite-nz = { version = "0.14.0", default-features = false, path = "../mithqalite-nz" }
+serde = { version = "1.0.188", optional = true, default-features = false, features = ["alloc", "derive"] }
+
+serde_json = { version = "1.0.149", optional = true }
+num = { version = "0.4.3", optional = true, features = ["serde"] }
+rug = { version = "1.30.0", default-features = false, optional = true, features = ["rational", "serde"] }
+
+[dev-dependencies]
+mithqalite-q = { path = ".", features = ["test_build"] }
+
+[features]
+default = ["std"]
+std = ["mithqalite-base/std", "mithqalite-nz/std"]
+enable_serde = ["serde", "mithqalite-nz/enable_serde"]
+random = ["mithqalite-base/random", "mithqalite-nz/random"]
+32_bit_limbs = ["mithqalite-nz/32_bit_limbs"]
+test_build = ["mithqalite-base/test_build", "mithqalite-nz/test_build", "random", "serde", "serde_json", "num", "rug"]
+bin_build = ["test_build"]
+
+[package.metadata.docs.rs]
+features = ["random"]
+rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+
+# Accept the `dylint_lib` cfg that `cargo dylint` sets, used by
+# `#[cfg_attr(dylint_lib = "mithqalite_lints", expect(...))]` exemptions (see mithqalite-lints).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(dylint_lib, values(any()))"] }

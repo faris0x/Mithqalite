@@ -1,0 +1,416 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+/// Implementations of [`Add`](core::ops::Add) and [`AddAssign`](core::ops::AddAssign), for adding
+/// matrices of the same shape.
+pub mod add;
+/// Adding a multiple of one matrix to another, by implementations of
+/// [`AddMul`](mithqalite_base::num::arithmetic::traits::AddMul) and
+/// [`AddMulAssign`](mithqalite_base::num::arithmetic::traits::AddMulAssign).
+///
+/// # add_mul
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::AddMul;
+/// use mithqalite_base::num::basic::traits::{One, Zero};
+/// use mithqalite_nz::natural::Natural;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// assert_eq!(
+///     NaturalMatrix::from_str("[]_{0,0}")
+///         .unwrap()
+///         .add_mul(
+///             NaturalMatrix::from_str("[]_{0,0}").unwrap(),
+///             Natural::from(5u32)
+///         )
+///         .to_string(),
+///     "[]_{0,0}"
+/// );
+/// assert_eq!(
+///     NaturalMatrix::from_str("[1, 2, 3]")
+///         .unwrap()
+///         .add_mul(NaturalMatrix::from_str("[4, 5, 6]").unwrap(), Natural::ZERO)
+///         .to_string(),
+///     "[1, 2, 3]"
+/// );
+/// assert_eq!(
+///     NaturalMatrix::from_str("[1, 2, 3]")
+///         .unwrap()
+///         .add_mul(NaturalMatrix::from_str("[4, 5, 6]").unwrap(), Natural::ONE)
+///         .to_string(),
+///     "[5, 7, 9]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[1, 2, 3]").unwrap())
+///         .add_mul(
+///             &NaturalMatrix::from_str("[4, 5, 6]").unwrap(),
+///             &Natural::from(10u32)
+///         )
+///         .to_string(),
+///     "[41, 52, 63]"
+/// );
+/// assert_eq!(
+///     NaturalMatrix::from_str("[1, 0]")
+///         .unwrap()
+///         .add_mul(
+///             &NaturalMatrix::from_str("[18446744073709551615, 1]").unwrap(),
+///             &Natural::from_str("18446744073709551617").unwrap()
+///         )
+///         .to_string(),
+///     "[340282366920938463463374607431768211456, 18446744073709551617]"
+/// );
+/// ```
+///
+/// # add_mul_assign
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::AddMulAssign;
+/// use mithqalite_nz::natural::Natural;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// let mut a = NaturalMatrix::from_str("[1, 2, 3]").unwrap();
+/// a.add_mul_assign(
+///     NaturalMatrix::from_str("[4, 5, 6]").unwrap(),
+///     Natural::from(10u32),
+/// );
+/// assert_eq!(a.to_string(), "[41, 52, 63]");
+/// ```
+pub mod add_mul;
+/// Implementations of [`CanonicalPrimitivePart`](
+/// mithqalite_base::num::arithmetic::traits::CanonicalPrimitivePart),
+/// [`CanonicalPrimitivePartAssign`](
+/// mithqalite_base::num::arithmetic::traits::CanonicalPrimitivePartAssign), and
+/// [`ContentAndCanonicalPrimitivePart`](
+/// mithqalite_base::num::arithmetic::traits::ContentAndCanonicalPrimitivePart), which, for a matrix
+/// with non-negative elements, are the same as the primitive part.
+pub mod canonical_primitive_part;
+/// Implementations of [`Content`](mithqalite_base::num::arithmetic::traits::Content),
+/// [`PrimitivePart`](mithqalite_base::num::arithmetic::traits::PrimitivePart),
+/// [`PrimitivePartAssign`](mithqalite_base::num::arithmetic::traits::PrimitivePartAssign), and
+/// [`ContentAndPrimitivePart`](mithqalite_base::num::arithmetic::traits::ContentAndPrimitivePart),
+/// which compute the GCD of a matrix's elements and the matrix divided by it.
+pub mod content;
+/// Implementations of [`ContentChained`](mithqalite_base::num::arithmetic::traits::ContentChained),
+/// which computes the GCD of a number and a matrix's elements.
+pub mod content_chained;
+/// Exact division of a matrix by a scalar, by implementations of
+/// [`DivExact`](mithqalite_base::num::arithmetic::traits::DivExact) and
+/// [`DivExactAssign`](mithqalite_base::num::arithmetic::traits::DivExactAssign).
+///
+/// # div_exact
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::DivExact;
+/// use mithqalite_base::num::basic::traits::One;
+/// use mithqalite_nz::natural::Natural;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// assert_eq!(
+///     NaturalMatrix::from_str("[]_{2,0}")
+///         .unwrap()
+///         .div_exact(Natural::from(5u32))
+///         .to_string(),
+///     "[]_{2,0}"
+/// );
+/// assert_eq!(
+///     NaturalMatrix::from_str("[0, 6; 255, 3]")
+///         .unwrap()
+///         .div_exact(Natural::ONE)
+///         .to_string(),
+///     "[0, 6; 255, 3]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[0, 6; 255, 3]").unwrap())
+///         .div_exact(&Natural::from(3u32))
+///         .to_string(),
+///     "[0, 2; 85, 1]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[3802951800684688204490109616128, 6; 0, 3]").unwrap())
+///         .div_exact(Natural::from(3u32))
+///         .to_string(),
+///     "[1267650600228229401496703205376, 2; 0, 1]"
+/// );
+/// ```
+///
+/// # div_exact_assign
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::DivExactAssign;
+/// use mithqalite_nz::natural::Natural;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// let mut a = NaturalMatrix::from_str("[0, 6; 255, 3]").unwrap();
+/// a.div_exact_assign(Natural::from(3u32));
+/// assert_eq!(a.to_string(), "[0, 2; 85, 1]");
+/// ```
+pub mod div_exact;
+/// Left-shifting a matrix (multiplying it by a power of 2) and rounding every element, by
+/// implementations of
+/// [`EntrywiseShlRound`](mithqalite_base::num::arithmetic::traits::EntrywiseShlRound) and
+/// [`EntrywiseShlRoundAssign`](mithqalite_base::num::arithmetic::traits::EntrywiseShlRoundAssign).
+///
+/// # entrywise_shl_round
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::EntrywiseShlRound;
+/// use mithqalite_base::rounding_modes::RoundingMode::*;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shl_round(-1i8, Floor))
+///     .to_string(),
+///     "[0, 1; 1, 2]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shl_round(-1i16, Ceiling))
+///     .to_string(),
+///     "[1, 1; 2, 3]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shl_round(-1i32, Nearest))
+///         .to_string(),
+///     "[0, 1; 2, 2]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[4, 8, 12]")
+///         .unwrap()
+///         .entrywise_shl_round(-2i64, Exact))
+///     .to_string(),
+///     "[1, 2, 3]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[1, 2, 3]")
+///         .unwrap()
+///         .entrywise_shl_round(2i8, Exact))
+///         .to_string(),
+///     "[4, 8, 12]"
+/// );
+/// ```
+///
+/// # entrywise_shl_round_assign
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::EntrywiseShlRoundAssign;
+/// use mithqalite_base::rounding_modes::RoundingMode::*;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// let mut a = NaturalMatrix::from_str("[1, 2; 3, 5]").unwrap();
+/// a.entrywise_shl_round_assign(-1i8, Nearest);
+/// assert_eq!(a.to_string(), "[0, 1; 2, 2]");
+/// let mut a = NaturalMatrix::from_str("[1, 2, 3]").unwrap();
+/// a.entrywise_shl_round_assign(2i32, Exact);
+/// assert_eq!(a.to_string(), "[4, 8, 12]");
+/// ```
+pub mod entrywise_shl_round;
+/// Right-shifting a matrix (dividing it by a power of 2) and rounding every element, by
+/// implementations of
+/// [`EntrywiseShrRound`](mithqalite_base::num::arithmetic::traits::EntrywiseShrRound) and
+/// [`EntrywiseShrRoundAssign`](mithqalite_base::num::arithmetic::traits::EntrywiseShrRoundAssign).
+///
+/// # entrywise_shr_round
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::EntrywiseShrRound;
+/// use mithqalite_base::rounding_modes::RoundingMode::*;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shr_round(1u8, Floor))
+///     .to_string(),
+///     "[0, 1; 1, 2]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shr_round(1u16, Ceiling))
+///     .to_string(),
+///     "[1, 1; 2, 3]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shr_round(1u32, Nearest))
+///         .to_string(),
+///     "[0, 1; 2, 2]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[4, 8, 12]")
+///         .unwrap()
+///         .entrywise_shr_round(2u64, Exact))
+///     .to_string(),
+///     "[1, 2, 3]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2; 3, 5]")
+///         .unwrap()
+///         .entrywise_shr_round(1i8, Down))
+///     .to_string(),
+///     "[0, 1; 1, 2]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[1, 2, 3]")
+///         .unwrap()
+///         .entrywise_shr_round(-2i16, Exact))
+///         .to_string(),
+///     "[4, 8, 12]"
+/// );
+/// ```
+///
+/// # entrywise_shr_round_assign
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_base::num::arithmetic::traits::EntrywiseShrRoundAssign;
+/// use mithqalite_base::rounding_modes::RoundingMode::*;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// let mut a = NaturalMatrix::from_str("[1, 2; 3, 5]").unwrap();
+/// a.entrywise_shr_round_assign(1u8, Nearest);
+/// assert_eq!(a.to_string(), "[0, 1; 2, 2]");
+/// let mut a = NaturalMatrix::from_str("[1, 2; 3, 5]").unwrap();
+/// a.entrywise_shr_round_assign(1i32, Up);
+/// assert_eq!(a.to_string(), "[1, 1; 2, 3]");
+/// ```
+pub mod entrywise_shr_round;
+/// Implementations of
+/// [`KroneckerProduct`](mithqalite_base::num::arithmetic::traits::KroneckerProduct) and
+/// [`KroneckerProductAssign`](mithqalite_base::num::arithmetic::traits::KroneckerProductAssign), for
+/// computing the Kronecker product of two [`NaturalMatrix`](super::NaturalMatrix)s.
+pub mod kronecker_product;
+/// Implementations of [`Mul`](core::ops::Mul) and [`MulAssign`](core::ops::MulAssign), for
+/// multiplying two matrices.
+pub mod mul;
+/// Implementations of [`Mul`](core::ops::Mul) for multiplying a
+/// [`NaturalMatrix`](super::NaturalMatrix) by a
+/// [`NaturalVector`](crate::natural_vector::NaturalVector) on the right.
+pub mod mul_vector;
+/// Implementations of [`Pow`](mithqalite_base::num::arithmetic::traits::Pow) and
+/// [`PowAssign`](mithqalite_base::num::arithmetic::traits::PowAssign), for raising a square matrix
+/// to a power.
+pub mod pow;
+/// Implementations of [`Mul`](core::ops::Mul) and [`MulAssign`](core::ops::MulAssign), for
+/// multiplying a [`NaturalMatrix`](super::NaturalMatrix) by a scalar on either side.
+pub mod scalar_mul;
+/// Left-shifting a matrix (multiplying it by a power of 2), by implementations of
+/// [`Shl`](core::ops::Shl) and [`ShlAssign`](core::ops::ShlAssign).
+///
+/// # shl
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[]_{0,0}").unwrap() << 10u8).to_string(),
+///     "[]_{0,0}"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2, 3]").unwrap() << 0u16).to_string(),
+///     "[1, 2, 3]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2, 3]").unwrap() << 2u32).to_string(),
+///     "[4, 8, 12]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[3, 0]").unwrap() << 100u64).to_string(),
+///     "[3802951800684688204490109616128, 0]"
+/// );
+///
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2, 3]").unwrap() << 2i8).to_string(),
+///     "[4, 8, 12]"
+/// );
+///
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[1, 2; 3, 5]").unwrap() << -1i64).to_string(),
+///     "[0, 1; 1, 2]"
+/// );
+/// ```
+///
+/// # shl_assign
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// let mut a = NaturalMatrix::from_str("[1, 2, 3]").unwrap();
+/// a <<= 2u32;
+/// assert_eq!(a.to_string(), "[4, 8, 12]");
+///
+/// let mut a = NaturalMatrix::from_str("[1, 2; 3, 5]").unwrap();
+/// a <<= -1i32;
+/// assert_eq!(a.to_string(), "[0, 1; 1, 2]");
+/// ```
+pub mod shl;
+/// Right-shifting a matrix (dividing it by a power of 2 and taking the floor), by implementations
+/// of [`Shr`](core::ops::Shr) and [`ShrAssign`](core::ops::ShrAssign).
+///
+/// # shr
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[]_{0,0}").unwrap() >> 10u8).to_string(),
+///     "[]_{0,0}"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2, 3]").unwrap() >> 0u16).to_string(),
+///     "[1, 2, 3]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[4, 8, 12]").unwrap() >> 2u32).to_string(),
+///     "[1, 2, 3]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2; 3, 5]").unwrap() >> 1u8).to_string(),
+///     "[0, 1; 1, 2]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[3802951800684688204490109616128, 0]").unwrap() >> 100u64)
+///         .to_string(),
+///     "[3, 0]"
+/// );
+/// assert_eq!(
+///     (NaturalMatrix::from_str("[1, 2, 3]").unwrap() >> -2i8).to_string(),
+///     "[4, 8, 12]"
+/// );
+/// assert_eq!(
+///     (&NaturalMatrix::from_str("[4, 8, 12]").unwrap() >> 2i64).to_string(),
+///     "[1, 2, 3]"
+/// );
+/// ```
+///
+/// # shr_assign
+/// ```
+/// use core::str::FromStr;
+/// use mithqalite_nz::natural_matrix::NaturalMatrix;
+///
+/// let mut a = NaturalMatrix::from_str("[4, 8, 12]").unwrap();
+/// a >>= 2u32;
+/// assert_eq!(a.to_string(), "[1, 2, 3]");
+/// let mut a = NaturalMatrix::from_str("[1, 2, 3]").unwrap();
+/// a >>= -2i32;
+/// assert_eq!(a.to_string(), "[4, 8, 12]");
+/// ```
+pub mod shr;
+/// Implementations of [`Square`](mithqalite_base::num::arithmetic::traits::Square) and
+/// [`SquareAssign`](mithqalite_base::num::arithmetic::traits::SquareAssign), for squaring a square
+/// matrix.
+pub mod square;
+/// Implementations of [`Mul`](core::ops::Mul) for multiplying a
+/// [`NaturalVector`](crate::natural_vector::NaturalVector) by a
+/// [`NaturalMatrix`](super::NaturalMatrix) on the right.
+pub mod vector_mul;

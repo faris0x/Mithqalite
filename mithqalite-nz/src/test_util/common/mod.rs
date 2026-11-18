@@ -1,0 +1,130 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::integer::Integer;
+use crate::natural::Natural;
+#[cfg(not(feature = "32_bit_limbs"))]
+use crate::platform::Limb;
+use mithqalite_base::num::arithmetic::traits::Sign as SignTrait;
+#[cfg(not(feature = "32_bit_limbs"))]
+use mithqalite_base::num::conversion::traits::VecFromOtherTypeSlice;
+use num::bigint::Sign;
+use num::{BigInt, BigUint};
+use rug::integer::Order;
+use std::cmp::Ordering::*;
+
+#[cfg(feature = "32_bit_limbs")]
+impl From<&BigUint> for Natural {
+    #[inline]
+    fn from(n: &BigUint) -> Self {
+        Self::from_owned_limbs_asc(n.to_u32_digits())
+    }
+}
+
+#[cfg(not(feature = "32_bit_limbs"))]
+impl From<&BigUint> for Natural {
+    #[inline]
+    fn from(n: &BigUint) -> Self {
+        Self::from_owned_limbs_asc(Limb::vec_from_other_type_slice(&n.to_u32_digits()))
+    }
+}
+
+#[cfg(feature = "32_bit_limbs")]
+impl From<&Natural> for BigUint {
+    #[inline]
+    fn from(n: &Natural) -> Self {
+        Self::new(n.to_limbs_asc())
+    }
+}
+
+#[cfg(not(feature = "32_bit_limbs"))]
+impl From<&Natural> for BigUint {
+    #[inline]
+    fn from(n: &Natural) -> Self {
+        Self::new(u32::vec_from_other_type_slice(n.as_limbs_asc()))
+    }
+}
+
+#[cfg(feature = "32_bit_limbs")]
+impl From<&Natural> for BigInt {
+    #[inline]
+    fn from(n: &Natural) -> Self {
+        Self::from_biguint(
+            if *n == 0 { Sign::NoSign } else { Sign::Plus },
+            BigUint::new(n.to_limbs_asc()),
+        )
+    }
+}
+
+#[cfg(not(feature = "32_bit_limbs"))]
+impl From<&Natural> for BigInt {
+    #[inline]
+    fn from(n: &Natural) -> Self {
+        Self::from_biguint(
+            if *n == 0u32 { Sign::NoSign } else { Sign::Plus },
+            BigUint::new(u32::vec_from_other_type_slice(n.as_limbs_asc())),
+        )
+    }
+}
+
+impl TryFrom<&rug::Integer> for Natural {
+    type Error = ();
+
+    #[inline]
+    fn try_from(n: &rug::Integer) -> Result<Self, ()> {
+        if *n >= 0 {
+            Ok(Self::from_owned_limbs_asc(n.to_digits(Order::Lsf)))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl From<&Natural> for rug::Integer {
+    #[inline]
+    fn from(n: &Natural) -> Self {
+        Self::from_digits(n.as_limbs_asc(), Order::Lsf)
+    }
+}
+
+impl From<&BigInt> for Integer {
+    #[inline]
+    fn from(n: &BigInt) -> Self {
+        Self::from_sign_and_abs(n.sign() != Sign::Minus, Natural::from(n.magnitude()))
+    }
+}
+
+impl From<&Integer> for BigInt {
+    #[inline]
+    fn from(n: &Integer) -> Self {
+        let sign = match n.sign() {
+            Less => Sign::Minus,
+            Equal => Sign::NoSign,
+            Greater => Sign::Plus,
+        };
+        Self::from_biguint(sign, BigUint::from(n.unsigned_abs_ref()))
+    }
+}
+
+impl From<&rug::Integer> for Integer {
+    #[inline]
+    fn from(n: &rug::Integer) -> Self {
+        Self::from_sign_and_abs(
+            *n >= 0,
+            Natural::from_owned_limbs_asc(n.to_digits(Order::Lsf)),
+        )
+    }
+}
+
+impl From<&Integer> for rug::Integer {
+    #[inline]
+    fn from(n: &Integer) -> Self {
+        let out = Self::from(n.unsigned_abs_ref());
+        if *n >= 0u32 { out } else { -out }
+    }
+}

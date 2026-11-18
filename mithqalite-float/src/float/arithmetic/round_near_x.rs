@@ -1,0 +1,338 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the GNU MPFR Library.
+//
+//      Copyright 2005-2026 Free Software Foundation, Inc.
+//
+//      Contributed by the Pascaline and Caramba projects, INRIA.
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::Float;
+use core::cmp::Ordering::{self, *};
+use core::cmp::{max, min};
+use mithqalite_base::num::arithmetic::traits::{Abs, PowerOf2, Reciprocal};
+use mithqalite_base::num::conversion::traits::ExactFrom;
+use mithqalite_base::num::logic::traits::SignificantBits;
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_nz::natural::arithmetic::float::round::float_can_round;
+use mithqalite_q::Rational;
+
+// Steps `y` to the next `prec`-precision value away from zero, like `mpfr_nexttoinf` (note that
+// `Float::increment` is not suitable: it does not preserve precision when crossing a power of 2).
+// Multiplying by 1 + 2^-(prec+1) yields a value strictly between y and its successor in magnitude
+// — including across power-of-2 boundaries — so rounding away from zero produces exactly that
+// successor. Overflow produces an infinity.
+fn step_away_from_zero(y: Float, prec: u64) -> Float {
+    let mult = Float::one_prec(prec + 2)
+        .add_prec(Float::power_of_2(-i64::exact_from(prec) - 1), prec + 2)
+        .0;
+    y.mul_prec_round(mult, prec, Up).0
+}
+
+// Steps `y` to the next `prec`-precision value toward zero, like `mpfr_nexttozero`. Multiplying by
+// 1 - 2^-(prec+1) yields a value strictly between y and its predecessor in magnitude — including
+// across power-of-2 boundaries, where the spacing halves — so rounding toward zero produces
+// exactly that predecessor. Underflow produces a zero with y's sign.
+fn step_toward_zero(y: Float, prec: u64) -> Float {
+    let mult = Float::one_prec(prec + 1)
+        .sub_prec(Float::power_of_2(-i64::exact_from(prec) - 1), prec + 1)
+        .0;
+    y.mul_prec_round(mult, prec, Down).0
+}
+
+// Helper for fast rounding when a function's value is known to be very close to its argument (or to
+// another easily-computed value). Assuming the true value is f(x) = v + g(x) with |g(x)| <
+// 2^(EXP(v) - err), and that f(x) is not exactly representable, tries to determine round(f(x),
+// prec, rm) from v alone.
+//
+// If the error bound is too large to round correctly, returns `None`, and the caller must compute
+// f(x) the expensive way. Otherwise, returns the correctly rounded value and the (nonzero) ternary
+// value, as an `Ordering`.
+//
+// `v` must be finite and nonzero. If `dir` is `false`, the error term g(x) brings f(x) toward zero
+// (|f(x)| < |v|); if `dir` is `true`, away from zero (|f(x)| > |v|).
+//
+// # Worst-case complexity
+// $T(n) = O(n)$
+//
+// $M(n) = O(n)$
+//
+// where $T$ is time, $M$ is additional memory, and $n$ is `v.significant_bits()`.
+//
+// # Panics
+// Panics if `v` is NaN, infinite, or zero, or if `rm` is `Exact` (the result is never exact).
+//
+// This is equivalent to `mpfr_round_near_x` from `round_near_x.c`, MPFR 4.3.0, where the result is
+// returned along with the ternary value, and a `None` return corresponds to a 0 return in C. MPFR's
+// MPFR_FAST_COMPUTE_IF_SMALL_INPUT, for a function whose value is x plus a correction of order x^3:
+// returns the correctly rounded result directly when x is small enough for that correction to be
+// invisible at the target precision, and `None` when the caller must compute the function properly.
+//
+// `err1` and `err2` are the two halves of MPFR's error exponent, which together bound the
+// correction by 2^(EXP(x) - err1 - err2); `dir` says whether the correction carries the value away
+// from zero. A nonpositive `err1` means x is too large for the shortcut.
+//
+// The bound handed to `float_round_near_x` is capped rather than passed at its true size, which for
+// a tiny x runs to about 2^31: a pointlessly large bound makes it round a huge value, and the
+// general path its callers fall back to works at a precision of about -EXP(x) bits. The cap sits
+// above the input's own precision where it can, which spares `float_round_near_x` its
+// `float_can_round` test; where the true bound is smaller than that the test does run and can
+// decline, but only for an x large enough that the general path is cheap.
+pub(crate) fn small_input_shortcut(
+    x: &Float,
+    err1: i64,
+    err2: u64,
+    dir: bool,
+    prec: u64,
+    rm: RoundingMode,
+) -> Option<(Float, Ordering)> {
+    if err1 <= 0 {
+        return None;
+    }
+    let err = u64::exact_from(err1) + err2;
+    if err <= prec + 1 {
+        return None;
+    }
+    let cap = max(prec + 2, x.get_prec().unwrap() + 1);
+    float_round_near_x(x, min(err, cap), dir, prec, rm)
+}
+
+crate_test_fn! {float_round_near_x(
+    v: &Float,
+    err: u64,
+    dir: bool,
+    prec: u64,
+    rm: RoundingMode
+) -> Option<(Float, Ordering)> {
+    assert_ne!(rm, Exact, "Inexact float_round_near_x");
+    let sign = if v > &0u32 { Greater } else { Less };
+    let prec_v = v.get_prec().unwrap();
+    // First check if we can round. The test is more restrictive than necessary. (The C version
+    // calls the raw mpfr_round_p and adds 1 to the precision for Nearest itself; float_can_round is
+    // the MPFR_CAN_ROUND macro, which already does that internally.)
+    if !(err > prec + 1
+        && (err > prec_v || float_can_round(v.significand_ref().unwrap(), err, prec, rm)))
+    {
+        // If we can't round, the caller must compute the function the expensive way.
+        return None;
+    }
+    // Round v to the target precision. In C this is MPFR_RNDRAW_GEN with a custom halfway-case
+    // hook; here, the halfway case is detected separately: v rounds to a tie at `prec` iff it is
+    // exactly representable in prec + 1 bits but not in prec bits.
+    if rm == Nearest {
+        let (y_wide, o_wide) = Float::from_float_prec_round_ref(v, prec + 1, Down);
+        if o_wide == Equal {
+            let (y_trunc, o_trunc) = Float::from_float_prec_round(y_wide, prec, Down);
+            if o_trunc != Equal {
+                // Halfway case. Instead of rounding to even, the error direction breaks the tie: if
+                // the error is toward zero, the true value is below the midpoint, so truncate;
+                // otherwise it is above, so round away from zero.
+                return Some(if dir {
+                    (step_away_from_zero(y_trunc, prec), sign)
+                } else {
+                    (y_trunc, sign.reverse())
+                });
+            }
+        }
+    }
+    let (mut y, mut o) = Float::from_float_prec_round_ref(v, prec, rm);
+    // If o == Equal, setting y from v was exact, but the error term hasn't been taken into account
+    // yet; the result is still inexact, and some rounding modes require a final nudge.
+    if o == Equal {
+        if dir {
+            // The error term brings f(x) away from zero.
+            o = sign.reverse();
+            let rounds_away = match rm {
+                Floor => sign == Less,
+                Ceiling => sign == Greater,
+                Up => true,
+                _ => false,
+            };
+            if rounds_away {
+                o = sign;
+                y = step_away_from_zero(y, prec);
+            }
+        } else {
+            // The error term brings f(x) toward zero.
+            o = sign;
+            let rounds_to_zero = match rm {
+                Floor => sign == Greater,
+                Ceiling => sign == Less,
+                Down => true,
+                _ => false,
+            };
+            if rounds_to_zero {
+                o = sign.reverse();
+                y = step_toward_zero(y, prec);
+            }
+        }
+    }
+    assert_ne!(o, Equal);
+    Some((y, o))
+}}
+
+// The lowest input exponent at which a leading-term shortcut built on `round_from_below` or
+// `round_from_above` is safe. Below it the `prec + 1`-bit tie test and the nudge would be working
+// with `Float`s that underflow -- or, for a reciprocal, overflow -- so such inputs are left to the
+// exact paths that follow.
+pub(crate) const LEADING_TERM_MIN_EXPONENT: i64 = Float::MIN_EXPONENT_I64 + 4;
+
+// Whether `wide`, an exact value rounded to `prec + 1` bits, is exactly halfway between two
+// `prec`-bit `Float`s, which `Nearest` would otherwise break on its own. `o_wide` is the ternary of
+// that rounding, so `wide` holds the value itself only when it is `Equal`.
+pub(crate) fn value_is_tie(wide: &Float, o_wide: Ordering, prec: u64) -> bool {
+    o_wide == Equal && Float::from_float_prec_round_ref(wide, prec, Down).1 != Equal
+}
+
+// Turns the correctly rounded leading term of a function into the correctly rounded function, where
+// the true value lies strictly above the term and nearer to it than the target precision can
+// resolve. `t` and `o` are the term rounded to `prec` with `rm`, and `tie` says whether the term
+// lands exactly halfway between two `prec`-bit `Float`s. The term's own rounding is the answer but
+// for two cases -- a term landing exactly on a representable value, and one landing on a tie --
+// both of which have to move up, the true value being strictly above.
+//
+// Callers working on |x| for an odd function pass the reflected rounding mode, so "up" there means
+// away from zero. The counterpart of `round_from_below` for a function whose true value lies
+// strictly BELOW its leading term: the two exceptional cases move down instead.
+pub(crate) fn round_from_above(
+    t: Float,
+    o: Ordering,
+    tie: bool,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    if o == Equal {
+        return if rm == Floor || rm == Down {
+            let mut t = t;
+            t.decrement();
+            (t, Less)
+        } else {
+            (t, Greater)
+        };
+    }
+    if tie {
+        // `Nearest` broke the tie its own way; the true value is below it, so the lower neighbour
+        // wins
+        if o == Less {
+            return (t, Less);
+        }
+        let mut t = t;
+        t.decrement();
+        return (t, Less);
+    }
+    (t, o)
+}
+
+pub(crate) fn round_from_below(
+    t: Float,
+    o: Ordering,
+    tie: bool,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    if o == Equal {
+        return if rm == Ceiling || rm == Up {
+            let mut t = t;
+            t.increment();
+            (t, Greater)
+        } else {
+            (t, Less)
+        };
+    }
+    if tie {
+        // `Nearest` broke the tie its own way; the true value is above it, so the upper neighbour
+        // wins
+        if o == Greater {
+            return (t, Greater);
+        }
+        let mut t = t;
+        t.increment();
+        return (t, Greater);
+    }
+    (t, o)
+}
+
+// Rounds a function of a tiny nonzero x whose true value lies strictly beyond 1/x (away from zero)
+// if `beyond`, or strictly short of it (toward zero) otherwise, and nearer to 1/x than precision
+// `prec` can resolve. This holds for MPFR's ACTION_TINY inputs of the reciprocal functions, whose
+// expansions are 1/x plus a correction of order x. Rounding 1/x settles the result, except when 1/x
+// is exact (x a power of 2), where the true value lies one step beyond it or short of it. The
+// general Ziv loops could not settle that case at any working precision, since the reciprocal is
+// then exactly representable. The work is done on |1/x|, with the reflected rounding mode for a
+// negative x.
+pub(crate) fn round_near_reciprocal(
+    x: &Float,
+    beyond: bool,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    let negative = x.is_sign_negative();
+    let rm_abs = if negative { -rm } else { rm };
+    let (r, o) = x.reciprocal_prec_round_ref(prec, rm);
+    let (r, o) = if negative { (-r, o.reverse()) } else { (r, o) };
+    let (r, o) = if beyond {
+        round_from_below(r, o, false, rm_abs)
+    } else {
+        round_from_above(r, o, false, rm_abs)
+    };
+    if negative { (-r, o.reverse()) } else { (r, o) }
+}
+
+// Rounds a function of a nonzero `Rational` x from its leading term, whose magnitude is `term_abs`:
+// the function's magnitude lies strictly beyond the term (away from zero) if `beyond`, or strictly
+// short of it otherwise, and nearer to it than the distance from the term to any (prec + 1)-bit
+// dyadic other than the term itself, which the caller guarantees. The function has the sign of x,
+// given by `positive`. The term's own rounding is then the answer, but for a term that is exactly
+// representable or exactly halfway between two `prec`-bit `Float`s; `round_from_below` and
+// `round_from_above` move those. The work is done on the magnitude, with the reflected rounding
+// mode for a negative x.
+pub(crate) fn round_rational_leading_term(
+    term_abs: Rational,
+    positive: bool,
+    beyond: bool,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    let rm_abs = if positive { rm } else { -rm };
+    let (wide, o_wide) = Float::from_rational_prec_ref(&term_abs, prec + 1);
+    let tie = rm_abs == Nearest && value_is_tie(&wide, o_wide, prec);
+    let (t, o) = Float::from_rational_prec_round(term_abs, prec, rm_abs);
+    let (t, o) = if beyond {
+        round_from_below(t, o, tie, rm_abs)
+    } else {
+        round_from_above(t, o, tie, rm_abs)
+    };
+    if positive { (t, o) } else { (-t, o.reverse()) }
+}
+
+// The tiny-input shortcut for a function of a nonzero `Rational` x whose value is 1/x plus a
+// correction of x's sign or the opposite one (1/x lies short of the function's value, away from
+// zero, if `beyond`) and of magnitude below |x|/2; `exp_x` is the MPFR-style exponent of x. Once
+// the correction is below the distance from 1/|x| to the nearest (prec + 1)-bit dyadic, the
+// reciprocal's own rounding is the answer, nudged by `round_rational_leading_term`. For a numerator
+// of n bits -- 1/x has x's numerator for its denominator -- that distance is at least 2^(-n) when
+// the dyadics around 1/|x| are integers, which is when 1/|x| has more than prec bits before the
+// point, and 2^(-n) times their spacing 2^(-EXP(x) - prec) otherwise; the two conditions below
+// cover the two cases, and 1/|x| lands on a dyadic only in the exact and tie cases the nudge
+// handles. A bracket from series bounds would say the same, but forming it exactly builds a dense
+// `Rational` of about 2 |EXP(x)| bits: 27 seconds for the cotangent of x = 2^-536870908.
+//
+// Returns `None` when the conditions fail, and also for inputs at the bottom of the exponent range,
+// whose reciprocals reach the top: there the nudge and the tie test would be working with `Float`s
+// that overflow, so such inputs are left to the caller's exact paths.
+pub(crate) fn round_rational_reciprocal_leading_term(
+    x: &Rational,
+    exp_x: i64,
+    beyond: bool,
+    prec: u64,
+    rm: RoundingMode,
+) -> Option<(Float, Ordering)> {
+    let n = i64::exact_from(x.numerator_ref().significant_bits());
+    (exp_x > LEADING_TERM_MIN_EXPONENT
+        && -exp_x > n + 2
+        && -(exp_x << 1) > i64::exact_from(prec) + n + 4)
+        .then(|| round_rational_leading_term(x.abs().reciprocal(), *x > 0u32, beyond, prec, rm))
+}

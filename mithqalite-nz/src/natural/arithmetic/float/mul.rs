@@ -1,0 +1,915 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the GNU MPFR Library.
+//
+//      Copyright © 1999-2022 Free Software Foundation, Inc.
+//
+//      Contributed by the AriC and Caramba projects, INRIA.
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::natural::InnerNatural::{Large, Small};
+use crate::natural::arithmetic::float::round::{limbs_float_can_round, round_helper_raw};
+use crate::natural::arithmetic::float::square::{
+    limbs_float_square_high, limbs_float_square_high_scratch_len,
+};
+use crate::natural::arithmetic::mul::mul_high::{
+    limbs_mul_high_same_length, limbs_mul_high_same_length_scratch_len,
+};
+use crate::natural::arithmetic::mul::{limbs_mul_to_out, limbs_mul_to_out_scratch_len};
+use crate::natural::arithmetic::shl::limbs_slice_shl_in_place;
+use crate::natural::{
+    LIMB_HIGH_BIT, LIMB_MASK, NOT_LIMB_HIGH_BIT, Natural, THRICE_WIDTH, TWICE_WIDTH, WIDTH_MINUS_1,
+    bit_to_limb_count_ceiling, limb_to_bit_count,
+};
+use crate::platform::{DoubleLimb, Limb};
+use alloc::vec::Vec;
+use core::cmp::{
+    Ordering::{self, *},
+    min,
+};
+use mithqalite_base::num::arithmetic::traits::{
+    OverflowingAddAssign, Parity, PowerOf2, Sign, WrappingAddAssign, XMulYToZZ, XXAddYYToZZ,
+};
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::num::conversion::traits::{SplitInHalf, WrappingFrom};
+use mithqalite_base::num::exponential::traits::CeilingLogBase2;
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_base::slices::slice_leading_zeros;
+
+// This is mpfr_mul from mul.c, MPFR 4.2.0.
+pub fn mul_float_significands_in_place(
+    x: &mut Natural,
+    x_prec: u64,
+    y: &mut Natural,
+    y_prec: u64,
+    out_prec: u64,
+    rm: RoundingMode,
+) -> (i32, Ordering) {
+    if x_prec == y_prec
+        && out_prec == x_prec
+        && let Some((decrement_exp, o)) =
+            mul_float_significands_in_place_same_prec(x, y, out_prec, rm)
+    {
+        return (-i32::from(decrement_exp), o);
+    }
+    let (product, exp_offset, o) = if x_prec >= y_prec {
+        match (&mut *x, &mut *y) {
+            (Natural(Small(x)), Natural(Small(y))) => {
+                mul_float_significands_general(&[*x], x_prec, &[*y], y_prec, out_prec, rm)
+            }
+            (Natural(Large(xs)), Natural(Small(y))) => {
+                mul_float_significands_general(xs, x_prec, &[*y], y_prec, out_prec, rm)
+            }
+            (Natural(Large(xs)), Natural(Large(ys))) => {
+                mul_float_significands_general(xs, x_prec, ys, y_prec, out_prec, rm)
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        match (&mut *x, &mut *y) {
+            (Natural(Small(x)), Natural(Small(y))) => {
+                mul_float_significands_general(&[*y], y_prec, &[*x], x_prec, out_prec, rm)
+            }
+            (Natural(Small(x)), Natural(Large(ys))) => {
+                mul_float_significands_general(ys, y_prec, &[*x], x_prec, out_prec, rm)
+            }
+            (Natural(Large(xs)), Natural(Large(ys))) => {
+                mul_float_significands_general(ys, y_prec, xs, x_prec, out_prec, rm)
+            }
+            _ => unreachable!(),
+        }
+    };
+    *x = product;
+    (exp_offset, o)
+}
+
+// This is mpfr_mul from mul.c, MPFR 4.2.0.
+pub fn mul_float_significands_in_place_ref(
+    x: &mut Natural,
+    x_prec: u64,
+    y: &Natural,
+    y_prec: u64,
+    out_prec: u64,
+    rm: RoundingMode,
+) -> (i32, Ordering) {
+    if x_prec == y_prec
+        && out_prec == x_prec
+        && let Some((decrement_exp, o)) =
+            mul_float_significands_in_place_same_prec_ref(x, y, out_prec, rm)
+    {
+        return (-i32::from(decrement_exp), o);
+    }
+    let (product, exp_offset, o) = if x_prec >= y_prec {
+        match (&mut *x, y) {
+            (Natural(Small(x)), Natural(Small(y))) => {
+                mul_float_significands_general(&[*x], x_prec, &[*y], y_prec, out_prec, rm)
+            }
+            (Natural(Large(xs)), Natural(Small(y))) => {
+                mul_float_significands_general(xs, x_prec, &[*y], y_prec, out_prec, rm)
+            }
+            (Natural(Large(xs)), Natural(Large(ys))) => {
+                mul_float_significands_general(xs, x_prec, ys, y_prec, out_prec, rm)
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        match (&mut *x, y) {
+            (Natural(Small(x)), Natural(Small(y))) => {
+                mul_float_significands_general(&[*y], y_prec, &[*x], x_prec, out_prec, rm)
+            }
+            (Natural(Small(x)), Natural(Large(ys))) => {
+                mul_float_significands_general(ys, y_prec, &[*x], x_prec, out_prec, rm)
+            }
+            (Natural(Large(xs)), Natural(Large(ys))) => {
+                mul_float_significands_general(ys, y_prec, xs, x_prec, out_prec, rm)
+            }
+            _ => unreachable!(),
+        }
+    };
+    *x = product;
+    (exp_offset, o)
+}
+
+// This is mpfr_mul from mul.c, MPFR 4.2.0.
+pub fn mul_float_significands_ref_ref(
+    x: &Natural,
+    x_prec: u64,
+    y: &Natural,
+    y_prec: u64,
+    out_prec: u64,
+    rm: RoundingMode,
+) -> (Natural, i32, Ordering) {
+    match (x, y) {
+        (Natural(Small(x)), Natural(Small(y))) => {
+            mul_float_significands_ref_ref_helper(&[*x], x_prec, &[*y], y_prec, out_prec, rm)
+        }
+        (Natural(Large(xs)), Natural(Small(y))) => {
+            mul_float_significands_ref_ref_helper(xs, x_prec, &[*y], y_prec, out_prec, rm)
+        }
+        (Natural(Small(x)), Natural(Large(ys))) => {
+            mul_float_significands_ref_ref_helper(&[*x], x_prec, ys, y_prec, out_prec, rm)
+        }
+        (Natural(Large(xs)), Natural(Large(ys))) => {
+            mul_float_significands_ref_ref_helper(xs, x_prec, ys, y_prec, out_prec, rm)
+        }
+    }
+}
+
+pub(crate) fn mul_float_significands_ref_ref_helper(
+    xs: &[Limb],
+    x_prec: u64,
+    ys: &[Limb],
+    y_prec: u64,
+    out_prec: u64,
+    rm: RoundingMode,
+) -> (Natural, i32, Ordering) {
+    if x_prec == y_prec
+        && out_prec == x_prec
+        && let Some((product, decrement_exp, o)) =
+            mul_float_significands_same_prec_ref_ref(xs, ys, out_prec, rm)
+    {
+        return (product, -i32::from(decrement_exp), o);
+    }
+    if x_prec >= y_prec {
+        mul_float_significands_general(xs, x_prec, ys, y_prec, out_prec, rm)
+    } else {
+        mul_float_significands_general(ys, y_prec, xs, x_prec, out_prec, rm)
+    }
+}
+
+fn mul_float_significands_in_place_same_prec(
+    x: &mut Natural,
+    y: &mut Natural,
+    prec: u64,
+    rm: RoundingMode,
+) -> Option<(bool, Ordering)> {
+    match (x, y) {
+        (Natural(Small(x)), Natural(Small(y))) => {
+            let (product, decrement_exp, o) = if prec == Limb::WIDTH {
+                mul_float_significands_same_prec_w(*x, *y, rm)
+            } else {
+                mul_float_significands_same_prec_lt_w(*x, *y, prec, rm)
+            };
+            *x = product;
+            Some((decrement_exp, o))
+        }
+        (Natural(Large(xs)), Natural(Large(ys))) => match (xs.as_mut_slice(), ys.as_mut_slice()) {
+            ([x_0, x_1], [y_0, y_1]) if prec != TWICE_WIDTH => {
+                let (product_0, product_1, decrement_exp, o) =
+                    mul_float_significands_same_prec_gt_w_lt_2w(*x_0, *x_1, *y_0, *y_1, prec, rm);
+                *x_0 = product_0;
+                *x_1 = product_1;
+                Some((decrement_exp, o))
+            }
+            ([x_0, x_1, x_2], [y_0, y_1, y_2]) if prec != THRICE_WIDTH => {
+                let (product_0, product_1, product_2, decrement_exp, o) =
+                    mul_float_significands_same_prec_gt_2w_lt_3w(
+                        *x_0, *x_1, *x_2, *y_0, *y_1, *y_2, prec, rm,
+                    );
+                *x_0 = product_0;
+                *x_1 = product_1;
+                *x_2 = product_2;
+                Some((decrement_exp, o))
+            }
+            _ => None,
+        },
+        _ => unreachable!(),
+    }
+}
+
+fn mul_float_significands_in_place_same_prec_ref(
+    x: &mut Natural,
+    y: &Natural,
+    prec: u64,
+    rm: RoundingMode,
+) -> Option<(bool, Ordering)> {
+    match (x, y) {
+        (Natural(Small(x)), Natural(Small(y))) => {
+            let (product, decrement_exp, o) = if prec == Limb::WIDTH {
+                mul_float_significands_same_prec_w(*x, *y, rm)
+            } else {
+                mul_float_significands_same_prec_lt_w(*x, *y, prec, rm)
+            };
+            *x = product;
+            Some((decrement_exp, o))
+        }
+        (Natural(Large(xs)), Natural(Large(ys))) => match (xs.as_mut_slice(), ys.as_slice()) {
+            ([x_0, x_1], [y_0, y_1]) if prec != TWICE_WIDTH => {
+                let (product_0, product_1, decrement_exp, o) =
+                    mul_float_significands_same_prec_gt_w_lt_2w(*x_0, *x_1, *y_0, *y_1, prec, rm);
+                *x_0 = product_0;
+                *x_1 = product_1;
+                Some((decrement_exp, o))
+            }
+            ([x_0, x_1, x_2], [y_0, y_1, y_2]) if prec != THRICE_WIDTH => {
+                let (product_0, product_1, product_2, decrement_exp, o) =
+                    mul_float_significands_same_prec_gt_2w_lt_3w(
+                        *x_0, *x_1, *x_2, *y_0, *y_1, *y_2, prec, rm,
+                    );
+                *x_0 = product_0;
+                *x_1 = product_1;
+                *x_2 = product_2;
+                Some((decrement_exp, o))
+            }
+            _ => None,
+        },
+        _ => unreachable!(),
+    }
+}
+
+fn mul_float_significands_same_prec_ref_ref(
+    xs: &[Limb],
+    ys: &[Limb],
+    prec: u64,
+    rm: RoundingMode,
+) -> Option<(Natural, bool, Ordering)> {
+    match (xs, ys) {
+        ([x], [y]) => {
+            let (product, decrement_exp, o) = if prec == Limb::WIDTH {
+                mul_float_significands_same_prec_w(*x, *y, rm)
+            } else {
+                mul_float_significands_same_prec_lt_w(*x, *y, prec, rm)
+            };
+            Some((Natural(Small(product)), decrement_exp, o))
+        }
+        ([x_0, x_1], [y_0, y_1]) if prec != TWICE_WIDTH => {
+            let (product_0, product_1, decrement_exp, o) =
+                mul_float_significands_same_prec_gt_w_lt_2w(*x_0, *x_1, *y_0, *y_1, prec, rm);
+            Some((Natural(Large(vec![product_0, product_1])), decrement_exp, o))
+        }
+        ([x_0, x_1, x_2], [y_0, y_1, y_2]) if prec != THRICE_WIDTH => {
+            let (product_0, product_1, product_2, decrement_exp, o) =
+                mul_float_significands_same_prec_gt_2w_lt_3w(
+                    *x_0, *x_1, *x_2, *y_0, *y_1, *y_2, prec, rm,
+                );
+            Some((
+                Natural(Large(vec![product_0, product_1, product_2])),
+                decrement_exp,
+                o,
+            ))
+        }
+        _ => None,
+    }
+}
+
+// This is mpfr_mul_1 from mul.c, MPFR 4.2.0.
+fn mul_float_significands_same_prec_lt_w(
+    x: Limb,
+    y: Limb,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Limb, bool, Ordering) {
+    let shift = Limb::WIDTH - prec;
+    let shift_bit = Limb::power_of_2(shift);
+    let mask = shift_bit - 1;
+    let (mut z, mut sticky_bit) = Limb::x_mul_y_to_zz(x, y);
+    let decrement_exp = !z.get_highest_bit();
+    if decrement_exp {
+        z <<= 1;
+        z |= sticky_bit >> WIDTH_MINUS_1;
+        sticky_bit <<= 1;
+    }
+    let round_bit = z & (shift_bit >> 1);
+    sticky_bit |= (z & mask) ^ round_bit;
+    let mut product = z & !mask;
+    if round_bit == 0 && sticky_bit == 0 {
+        return (z, decrement_exp, Equal);
+    }
+    match rm {
+        Exact => panic!("Inexact float multiplication"),
+        Nearest => {
+            if round_bit == 0 || (sticky_bit == 0 && (product & shift_bit) == 0) {
+                (product, decrement_exp, Less)
+            } else if product.overflowing_add_assign(shift_bit) {
+                (LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (product, decrement_exp, Greater)
+            }
+        }
+        Floor | Down => (product, decrement_exp, Less),
+        Ceiling | Up => {
+            if product.overflowing_add_assign(shift_bit) {
+                (LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (product, decrement_exp, Greater)
+            }
+        }
+    }
+}
+
+// This is mpfr_mul_1n from mul.c, MPFR 4.2.0.
+fn mul_float_significands_same_prec_w(
+    x: Limb,
+    y: Limb,
+    rm: RoundingMode,
+) -> (Limb, bool, Ordering) {
+    let (mut z, mut sticky_bit) = Limb::x_mul_y_to_zz(x, y);
+    let decrement_exp = !z.get_highest_bit();
+    if decrement_exp {
+        z <<= 1;
+        z |= sticky_bit >> WIDTH_MINUS_1;
+        sticky_bit <<= 1;
+    }
+    let round_bit = sticky_bit & LIMB_HIGH_BIT;
+    sticky_bit &= NOT_LIMB_HIGH_BIT;
+    let mut product = z;
+    if round_bit == 0 && sticky_bit == 0 {
+        return (z, decrement_exp, Equal);
+    }
+    match rm {
+        Exact => panic!("Inexact float multiplication"),
+        Nearest => {
+            if round_bit == 0 || (sticky_bit == 0 && product.even()) {
+                (product, decrement_exp, Less)
+            } else if product.overflowing_add_assign(1) {
+                (LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (product, decrement_exp, Greater)
+            }
+        }
+        Floor | Down => (product, decrement_exp, Less),
+        Ceiling | Up => {
+            if product.overflowing_add_assign(1) {
+                (LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (product, decrement_exp, Greater)
+            }
+        }
+    }
+}
+
+// This is mpfr_mul_2 from mul.c, MPFR 4.2.0.
+fn mul_float_significands_same_prec_gt_w_lt_2w(
+    x_0: Limb,
+    x_1: Limb,
+    y_0: Limb,
+    y_1: Limb,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Limb, Limb, bool, Ordering) {
+    let shift = TWICE_WIDTH - prec;
+    let shift_bit = Limb::power_of_2(shift);
+    let mask = shift_bit - 1;
+    // we store the 4-limb product in h = z[1], l = z[0], sticky_bit = z[-1], sticky_bit_2 = z[-2]
+    let (mut hi, mut lo) = Limb::x_mul_y_to_zz(x_1, y_1);
+    let (u, v) = Limb::x_mul_y_to_zz(x_1, y_0);
+    if lo.overflowing_add_assign(u) {
+        hi += 1;
+    }
+    let (u, w) = Limb::x_mul_y_to_zz(x_0, y_1);
+    if lo.overflowing_add_assign(u) {
+        hi.wrapping_add_assign(1);
+    }
+    // now the full product is {hi, lo, v + w + high(x_0 * y_0), low(x_0 * y_0)}, where the lower
+    // part contributes to less than 3 ulps to {hi, lo}.
+    //
+    // If hi has its most significant bit set and the low shift - 1 bits of lo are not 000...000 nor
+    // 111...111 nor 111...110, then we can round correctly; if hi has zero as most significant bit,
+    // we have to shift left hi and lo, thus if the low sh-2 bits are not 000...000 nor 111...111
+    // nor 111...110, then we can round correctly. To avoid an extra test we consider the latter
+    // case (if we can round, we can also round in the former case). For shift <= 3, we have mask <=
+    // 7, thus (mask >> 2) <= 1, and the approximation cannot be enough.
+    let (mut sticky_bit, sticky_bit_2);
+    if lo.wrapping_add(2) & (mask >> 2) > 2 {
+        // result cannot be exact in that case
+        sticky_bit = 1;
+        sticky_bit_2 = 1;
+    } else {
+        (sticky_bit, sticky_bit_2) = Limb::x_mul_y_to_zz(x_0, y_0);
+        // The full product is {h, l, sticky_bit + v + w, sticky_bit_2}
+        if sticky_bit.overflowing_add_assign(v) && lo.overflowing_add_assign(1) {
+            hi.wrapping_add_assign(1);
+        }
+        if sticky_bit.overflowing_add_assign(w) && lo.overflowing_add_assign(1) {
+            hi.wrapping_add_assign(1);
+        }
+    }
+    let decrement_exp = !hi.get_highest_bit();
+    if decrement_exp {
+        hi <<= 1;
+        hi |= lo >> WIDTH_MINUS_1;
+        lo <<= 1;
+        lo |= sticky_bit >> WIDTH_MINUS_1;
+        sticky_bit <<= 1;
+        // no need to shift sticky_bit_2 since we only want to know if it is zero or not
+    }
+    let mut z_1 = hi;
+    let round_bit = lo & (shift_bit >> 1);
+    sticky_bit |= ((lo & mask) ^ round_bit) | sticky_bit_2;
+    let mut z_0 = lo & !mask;
+    if round_bit == 0 && sticky_bit == 0 {
+        return (z_0, z_1, decrement_exp, Equal);
+    }
+    match rm {
+        Exact => panic!("Inexact float multiplication"),
+        Nearest => {
+            if round_bit == 0 || (sticky_bit == 0 && (z_0 & shift_bit) == 0) {
+                (z_0, z_1, decrement_exp, Less)
+            } else if z_0.overflowing_add_assign(shift_bit) && z_1.overflowing_add_assign(1) {
+                (z_0, LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (z_0, z_1, decrement_exp, Greater)
+            }
+        }
+        Floor | Down => (z_0, z_1, decrement_exp, Less),
+        Ceiling | Up => {
+            if z_0.overflowing_add_assign(shift_bit) && z_1.overflowing_add_assign(1) {
+                (z_0, LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (z_0, z_1, decrement_exp, Greater)
+            }
+        }
+    }
+}
+
+// This is mpfr_mul_3 from mul.c, MPFR 4.2.0.
+fn mul_float_significands_same_prec_gt_2w_lt_3w(
+    x_0: Limb,
+    x_1: Limb,
+    x_2: Limb,
+    y_0: Limb,
+    y_1: Limb,
+    y_2: Limb,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Limb, Limb, Limb, bool, Ordering) {
+    let shift = THRICE_WIDTH - prec;
+    let shift_bit = Limb::power_of_2(shift);
+    let mask = shift_bit - 1;
+    // we store the upper 3-limb product in z2, z1, z0: x2 * y2, x2 * y1 + x1 * y2, x2 * y0 + x1 *
+    // y1 + x0 * y2
+    let x_0 = DoubleLimb::from(x_0);
+    let x_1 = DoubleLimb::from(x_1);
+    let x_2 = DoubleLimb::from(x_2);
+    let y_0 = DoubleLimb::from(y_0);
+    let y_1 = DoubleLimb::from(y_1);
+    let y_2 = DoubleLimb::from(y_2);
+    let x_2_y_2 = x_2 * y_2;
+    let x_2_y_1 = x_2 * y_1;
+    let x_1_y_2 = x_1 * y_2;
+    let x_2_y_0 = x_2 * y_0;
+    let x_1_y_1 = x_1 * y_1;
+    let x_0_y_2 = x_0 * y_2;
+    let (mut a2, mut a1) = x_2_y_2.split_in_half();
+    let (hi, mut a0) = x_2_y_1.split_in_half();
+    if a1.overflowing_add_assign(hi) {
+        a2 += 1;
+    }
+    let (hi, lo) = x_1_y_2.split_in_half();
+    if a1.overflowing_add_assign(hi) {
+        a2.wrapping_add_assign(1);
+    }
+    let mut carry = Limb::from(a0.overflowing_add_assign(lo));
+    if a0.overflowing_add_assign(x_2_y_0.upper_half()) {
+        carry += 1;
+    }
+    if a0.overflowing_add_assign(x_1_y_1.upper_half()) {
+        carry += 1;
+    }
+    if a0.overflowing_add_assign(x_0_y_2.upper_half()) {
+        carry += 1;
+    }
+    // now propagate carry
+    if a1.overflowing_add_assign(carry) {
+        a2.wrapping_add_assign(1);
+    }
+    // Now the approximate product {a2, a1, a0} has an error of less than 5 ulps (3 ulps for the
+    // ignored low limbs of x_2 * y_0 + x_1 * y_1 + x_0 * y2, plus 2 ulps for the ignored x_1 * y_0
+    // + x_0 * y_1 (plus x_0 * y_0)). Since we might shift by 1 bit, we make sure the low shift - 2
+    // bits of a0 are not 0, -1, -2, -3 or -4.
+    let (mut sticky_bit, sticky_bit_2) = if a0.wrapping_add(4) & (mask >> 2) > 4 {
+        // result cannot be exact in that case
+        (1, 1)
+    } else {
+        let out = x_0 * y_0;
+        let p_0 = out & LIMB_MASK;
+        let out = x_1 * y_0 + (out >> Limb::WIDTH);
+        let mut p_1 = out & LIMB_MASK;
+        let out = x_2_y_0 + (out >> Limb::WIDTH);
+        let mut p_2 = out & LIMB_MASK;
+        let mut p_3 = out >> Limb::WIDTH;
+        let out = p_1 + x_0 * y_1;
+        p_1 = out & LIMB_MASK;
+        let out = p_2 + x_1_y_1 + (out >> Limb::WIDTH);
+        p_2 = out & LIMB_MASK;
+        let out = p_3 + x_2_y_1 + (out >> Limb::WIDTH);
+        p_3 = out & LIMB_MASK;
+        let p_4 = out >> Limb::WIDTH;
+        let out = p_2 + x_0_y_2;
+        p_2 = out & LIMB_MASK;
+        let out = p_3 + x_1_y_2 + (out >> Limb::WIDTH);
+        p_3 = out & LIMB_MASK;
+        let out = p_4 + x_2_y_2 + (out >> Limb::WIDTH);
+        (a2, a1) = out.split_in_half();
+        a0 = Limb::wrapping_from(p_3);
+        (
+            Limb::wrapping_from(p_2),
+            Limb::wrapping_from(p_1) | Limb::wrapping_from(p_0),
+        )
+    };
+    let decrement_exp = !a2.get_highest_bit();
+    if decrement_exp {
+        a2 <<= 1;
+        a2 |= a1 >> WIDTH_MINUS_1;
+        a1 <<= 1;
+        a1 |= a0 >> WIDTH_MINUS_1;
+        a0 <<= 1;
+        a0 |= sticky_bit >> WIDTH_MINUS_1;
+        sticky_bit <<= 1;
+        // no need to shift sticky_bit_2: we only need to know if it is zero or not
+    }
+    let mut z_2 = a2;
+    let mut z_1 = a1;
+    let round_bit = a0 & (shift_bit >> 1);
+    sticky_bit |= ((a0 & mask) ^ round_bit) | sticky_bit_2;
+    let mut z_0 = a0 & !mask;
+    if round_bit == 0 && sticky_bit == 0 {
+        return (z_0, z_1, z_2, decrement_exp, Equal);
+    }
+    match rm {
+        Exact => panic!("Inexact float multiplication"),
+        Nearest => {
+            if round_bit == 0 || (sticky_bit == 0 && z_0 & shift_bit == 0) {
+                (z_0, z_1, z_2, decrement_exp, Less)
+            } else {
+                if z_0.overflowing_add_assign(shift_bit) {
+                    z_1.wrapping_add_assign(1);
+                }
+                if z_1 == 0 && z_0 == 0 {
+                    z_2.wrapping_add_assign(1);
+                }
+                if z_2 == 0 {
+                    (z_0, z_1, LIMB_HIGH_BIT, false, Greater)
+                } else {
+                    (z_0, z_1, z_2, decrement_exp, Greater)
+                }
+            }
+        }
+        Floor | Down => (z_0, z_1, z_2, decrement_exp, Less),
+        Ceiling | Up => {
+            if z_0.overflowing_add_assign(shift_bit) {
+                z_1.wrapping_add_assign(1);
+            }
+            if z_1 == 0 && z_0 == 0 {
+                z_2.wrapping_add_assign(1);
+            }
+            if z_2 == 0 {
+                (z_0, z_1, LIMB_HIGH_BIT, false, Greater)
+            } else {
+                (z_0, z_1, z_2, decrement_exp, Greater)
+            }
+        }
+    }
+}
+
+const MPFR_MUL_THRESHOLD: usize = 20;
+
+// x.limb_count() >= y.limb_count()
+fn mul_float_significands_general(
+    xs: &[Limb],
+    x_prec: u64,
+    ys: &[Limb],
+    y_prec: u64,
+    out_prec: u64,
+    rm: RoundingMode,
+) -> (Natural, i32, Ordering) {
+    let xs_len = xs.len();
+    let ys_len = ys.len();
+    assert!(xs_len >= ys_len);
+    let mut new_xs;
+    let mut new_ys;
+    let orig_xs = xs;
+    let orig_ys = ys;
+    let mut xs = xs;
+    let mut ys = ys;
+    let k = xs_len.checked_add(ys_len).unwrap();
+    let tmp_len = bit_to_limb_count_ceiling(x_prec.checked_add(y_prec).unwrap());
+    assert!(tmp_len <= k);
+    let mut tmp_vec: Vec<Limb>;
+    let mut tmp: &mut [Limb];
+    let mut b1 = false;
+    let mut goto_full_multiply = xs_len > 2 && ys_len <= MPFR_MUL_THRESHOLD;
+    let mut to = 0;
+    if xs_len <= 2 {
+        tmp_vec = vec![0; k];
+        tmp = &mut tmp_vec;
+        // The 3 cases perform the same first operation.
+        (tmp[1], tmp[0]) = Limb::x_mul_y_to_zz(xs[0], ys[0]);
+        b1 = if xs_len == 1 {
+            // 1 limb * 1 limb
+            tmp[1]
+        } else if ys_len == 1 {
+            // 2 limbs * 1 limb
+            let t;
+            (tmp[2], t) = Limb::x_mul_y_to_zz(xs[1], ys[0]);
+            (tmp[2], tmp[1]) = Limb::xx_add_yy_to_zz(tmp[2], tmp[1], 0, t);
+            tmp[2]
+        } else {
+            // 2 limbs * 2 limbs
+            //
+            // First 2 limbs * 1 limb
+            let mut t1;
+            (tmp[2], t1) = Limb::x_mul_y_to_zz(xs[1], ys[0]);
+            (tmp[2], tmp[1]) = Limb::xx_add_yy_to_zz(tmp[2], tmp[1], 0, t1);
+            let t2;
+            // Second, the other 2 limbs * 1 limb product
+            (t1, t2) = Limb::x_mul_y_to_zz(xs[0], ys[1]);
+            let t3;
+            (tmp[3], t3) = Limb::x_mul_y_to_zz(xs[1], ys[1]);
+            (tmp[3], t1) = Limb::xx_add_yy_to_zz(tmp[3], t1, 0, t3);
+            // Sum those two partial products
+            (tmp[2], tmp[1]) = Limb::xx_add_yy_to_zz(tmp[2], tmp[1], t1, t2);
+            let tmp_2 = tmp[2];
+            if tmp_2 < t1 {
+                tmp[3].wrapping_add_assign(1);
+            }
+            tmp[3]
+        }
+        .get_highest_bit();
+        to = k - tmp_len;
+        if !b1 {
+            limbs_slice_shl_in_place(&mut tmp[to..to + tmp_len], 1);
+        }
+    } else if ys_len > MPFR_MUL_THRESHOLD {
+        // xs_len >= ys_len and xs_len >= 3
+        //
+        // Mulders' mulhigh.
+        //
+        // First check if we can reduce the precision of x or y: exact values are a nightmare for
+        // the short product trick
+        if xs[0] == 0 && xs[1] == 0 || ys[0] == 0 && ys[1] == 0 {
+            let xs_leading_zeros = slice_leading_zeros(xs);
+            assert_ne!(xs_leading_zeros, xs_len);
+            let ys_leading_zeros = slice_leading_zeros(ys);
+            assert_ne!(ys_leading_zeros, ys_len);
+            return mul_float_significands_ref_ref_helper(
+                &xs[xs_leading_zeros..],
+                limb_to_bit_count(xs_len - xs_leading_zeros),
+                &ys[ys_leading_zeros..],
+                limb_to_bit_count(ys_len - ys_leading_zeros),
+                out_prec,
+                rm,
+            );
+        }
+        // Compute estimated precision of mulhigh.
+        let mut len = min(bit_to_limb_count_ceiling(out_prec) + 1, ys_len);
+        assert!(len >= 1 && len << 1 <= k && len <= ys_len && len <= xs_len);
+        let mut p = limb_to_bit_count(len) - (len + 2).ceiling_log_base_2();
+        // Check if MulHigh can produce a roundable result. We may lose 1 bit due to Nearest, 1 due
+        // to final shift.
+        let mut tmp_alloc = k;
+        if out_prec > p - 5 {
+            if out_prec > p - 5 + Limb::WIDTH || xs_len <= const { MPFR_MUL_THRESHOLD + 1 } {
+                // MulHigh can't produce a roundable result.
+                goto_full_multiply = true;
+                xs = &xs[xs_len - len..];
+                ys = &ys[ys_len - len..];
+            } else {
+                // Add one extra limb to mantissa of x and y.
+                xs = if xs_len > len {
+                    &xs[xs_len - len - 1..]
+                } else {
+                    new_xs = vec![0; len + 1];
+                    new_xs[1..].copy_from_slice(&xs[xs_len - len..xs_len]);
+                    &new_xs
+                };
+                #[cfg(feature = "32_bit_limbs")]
+                {
+                    ys = if ys_len > len {
+                        // This can only happen with 32-bit limbs, and is very unlikely to happen.
+                        // Indeed, since len = min(z_len + 1, ys_len), with z_len = prec /
+                        // Limb::WIDTH, we can have ys_len > len only when len = z_len + 1 < ys_len.
+                        // We are in the case prec > p - 5, p = len * Limb::WIDTH - ceil(log_2(len +
+                        // 2)), thus z_len * Limb::WIDTH - shift > len * Limb::WIDTH -
+                        // ceil(log_2(len + 2)) - 5. Thus len < z_len + (ceil(log_2(len + 2)) + 5 -
+                        // shift) / Limb::WIDTH. To get len = z_len + 1, we need ceil(log_2(len +
+                        // 2)) + 5 - shift > Limb::WIDTH, thus since shift >= 0 we need
+                        // ceil(log_2(len + 2)) + 5 > Limb::WIDTH. With Limb::WIDTH = 32 this can
+                        // only happen for len >= 2^27 - 1, thus for a precision of 2 ^ 32 - 64 for
+                        // z, and with Limb::WIDTH = 64 for n >= 2 ^ 59-1, which would give a
+                        // precision >= 2^64.
+                        &ys[ys_len - len - 1..]
+                    } else {
+                        new_ys = vec![0; len + 1];
+                        new_ys[1..].copy_from_slice(&ys[ys_len - len..ys_len]);
+                        &new_ys
+                    };
+                }
+                #[cfg(not(feature = "32_bit_limbs"))]
+                {
+                    new_ys = vec![0; len + 1];
+                    new_ys[1..].copy_from_slice(&ys[ys_len - len..ys_len]);
+                    ys = &new_ys;
+                }
+                // We will compute with one extra limb.
+                len += 1;
+                // ceil(log_2(len + 2)) takes into account the lost bits due to Mulders' short
+                // product.
+                p = limb_to_bit_count(len) - (len + 2).ceiling_log_base_2();
+                // Due to some nasty reasons we can have only 4 bits
+                assert!(out_prec <= p - 4);
+                let twice_len = len << 1;
+                if k < twice_len {
+                    tmp_alloc = twice_len;
+                    to = twice_len - k;
+                }
+                // Otherwise (k >= 2 * len) the initial `tmp_alloc = k` and `to = 0` are already
+                // correct: the approximate product is written to `tmp[k - 2 * len..]`, which fits.
+            }
+        } else {
+            xs = &xs[xs_len - len..];
+            ys = &ys[ys_len - len..];
+        }
+        if goto_full_multiply {
+            tmp_vec = vec![0; tmp_alloc];
+            tmp = &mut tmp_vec;
+        } else {
+            // Compute an approximation of the product of x and y
+            let square = core::ptr::eq(xs, ys) && x_prec == y_prec;
+            tmp_vec = vec![
+                0;
+                if square {
+                    limbs_float_square_high_scratch_len(len)
+                } else {
+                    limbs_mul_high_same_length_scratch_len(len)
+                } + tmp_alloc
+            ];
+            let scratch: &mut [Limb];
+            (tmp, scratch) = tmp_vec.split_at_mut(tmp_alloc);
+            if square {
+                limbs_float_square_high(&mut tmp[to + k - (len << 1)..], xs, scratch);
+            } else {
+                limbs_mul_high_same_length(&mut tmp[to + k - (len << 1)..], xs, ys, scratch);
+            }
+            // now tmp[k - len]..tmp[k - 1] contains an approximation of the `len` upper limbs of
+            // the product, with tmp[k - 1] >= 2 ^ (Limb::WIDTH - 2)
+            //
+            // msb from the product
+            //
+            // If the mantissas of x and y are uniformly distributed in (1/2, 1], then their product
+            // is in (1/4, 1/2] with probability 2 * ln(2) - 1 ~ 0.386 and in [1/2, 1] with
+            // probability 2 - 2 * ln(2) ~ 0.614
+            b1 = tmp[to + k - 1].get_highest_bit();
+            if !b1 {
+                limbs_slice_shl_in_place(&mut tmp[to + k - len - 1..to + k], 1);
+            }
+            // Now the approximation is in tmp[temp_len - len]...tmp[temp_len - 1]
+            assert!(tmp[to + k - 1].get_highest_bit());
+            // if the most significant bit b1 is zero, we have only p - 1 correct bits
+            if limbs_float_can_round(
+                &tmp[to + k - tmp_len..to + k],
+                p + u64::from(b1) - 1,
+                out_prec,
+                rm,
+            ) {
+                to += k - tmp_len;
+            } else {
+                goto_full_multiply = true;
+            }
+        }
+    } else {
+        tmp_vec = vec![0; k];
+        tmp = &mut tmp_vec;
+    }
+    tmp = &mut tmp[to..];
+    if goto_full_multiply {
+        let mut scratch = vec![0; limbs_mul_to_out_scratch_len(xs_len, ys_len)];
+        b1 = limbs_mul_to_out(tmp, orig_xs, orig_ys, &mut scratch).get_highest_bit();
+        // Now tmp[0]..tmp[k - 1] contains the product of both mantissas, with tmp[k - 1] >= 2 ^
+        // (Limb::WIDTH - 2).
+        //
+        // msb from the product
+        //
+        // If the mantissas of x and y are uniformly distributed in (1/2, 1], then their product is
+        // in (1/4, 1/2] with probability 2 * ln(2) - 1 ~ 0.386 and in [1/2, 1] with probability 2 -
+        // 2 * ln(2) ~ 0.614
+        tmp = &mut tmp[k - tmp_len..];
+        if !b1 {
+            limbs_slice_shl_in_place(&mut tmp[..tmp_len], 1);
+        }
+    }
+    let mut out = vec![0; bit_to_limb_count_ceiling(out_prec)];
+    let (inexact, increment_exp) = round_helper_raw(
+        &mut out,
+        out_prec,
+        tmp,
+        x_prec.checked_add(y_prec).unwrap(),
+        rm,
+    );
+    assert!(inexact == 0 || rm != Exact, "Inexact float multiplication");
+    let mut exp_offset = -i32::from(!b1);
+    if increment_exp {
+        exp_offset += 1;
+    }
+    (
+        Natural::from_owned_limbs_asc(out),
+        exp_offset,
+        inexact.sign(),
+    )
+}
+
+#[cfg(test)]
+mod mul_high_tests {
+    use super::*;
+    use crate::natural::Natural;
+    use crate::natural::arithmetic::mul::{
+        limbs_mul_same_length_to_out, limbs_mul_same_length_to_out_scratch_len,
+    };
+
+    // Deterministically fill `xs` with a normalized significand (most significant bit set).
+    fn fill(xs: &mut [Limb], mut seed: u64) {
+        for x in xs.iter_mut() {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *x = Limb::wrapping_from(seed >> 11);
+        }
+        *xs.last_mut().unwrap() |= 1 << (Limb::WIDTH - 1);
+    }
+
+    // Regression test for the mul-high scratch under-sizing bug. For operand lengths in the Toom
+    // band just below `MUL_FFT_THRESHOLD`, the old `scratch_len(len)` formula could return far less
+    // than the recursion actually consumes (as little as 0 where 1510 limbs are needed), which
+    // panicked deep in a Toom routine with "scratch too short". This checks that, for a range of
+    // lengths spanning that band and the FFT boundary, the scratch the size function reports is
+    // sufficient (no panic) and that the high-limb approximation matches the true product (the
+    // documented error is less than `len` ulps of the low limb of the high window).
+    #[test]
+    fn mul_high_scratch_len_sufficient_and_correct() {
+        for len in [5, 30, 100, 500, 800, 999, 1000, 1001, 1100, 1250, 1400, 1499, 1500, 1501, 1600]
+        {
+            let mut xs = vec![0; len];
+            let mut ys = vec![0; len];
+            fill(&mut xs, 0x1234_5678 ^ u64::wrapping_from(len));
+            fill(
+                &mut ys,
+                0x9abc_def0 ^ u64::wrapping_from(len).rotate_left(17),
+            );
+            let mut out = vec![0; len << 1];
+            let mut scratch = vec![0; limbs_mul_high_same_length_scratch_len(len)];
+            limbs_mul_high_same_length(&mut out, &xs, &ys, &mut scratch);
+
+            let mut full = vec![0; len << 1];
+            let mut full_scratch = vec![0; limbs_mul_same_length_to_out_scratch_len(len)];
+            limbs_mul_same_length_to_out(&mut full, &xs, &ys, &mut full_scratch);
+
+            // Compare the top `len` limbs of the approximation against the true product.
+            let approx = Natural::from_limbs_asc(&out[len..len << 1]);
+            let exact = Natural::from_limbs_asc(&full[len..len << 1]);
+            let diff = if approx <= exact {
+                exact - approx
+            } else {
+                approx - exact
+            };
+            assert!(
+                diff <= len << 1,
+                "len={len}: mul-high approximation error too large"
+            );
+        }
+    }
+}

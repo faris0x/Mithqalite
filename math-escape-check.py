@@ -29,7 +29,7 @@ import os
 import re
 import sys
 
-CRATES = ["malachite-base", "malachite-nz", "malachite-q", "malachite-float"]
+CRATES = ["mithqalite-base", "mithqalite-nz", "mithqalite-q", "mithqalite-float"]
 
 # Dropping the backslash before one of these breaks the span outright.
 DESTRUCTIVE = {

@@ -1,0 +1,22 @@
+error: `mithqalite_base` is reached through a `crate::` prefix that is not needed
+  --> $DIR/redundant_crate_prefix.rs:12:5
+   |
+LL | use crate::mithqalite_base::num::basic::traits::{One, Zero};
+   |     ^^^^^^^^^^^^^^^^^^^^^ help: remove the prefix: `mithqalite_base`
+   |
+   = note: `#[deny(redundant_crate_prefix)]` on by default
+
+error: `mithqalite_base` is reached through a `crate::` prefix that is not needed
+  --> $DIR/redundant_crate_prefix.rs:13:5
+   |
+LL | use crate::mithqalite_base::num::modular::traits::Mod;
+   |     ^^^^^^^^^^^^^^^^^^^^^ help: remove the prefix: `mithqalite_base`
+
+error: `mithqalite_base` is reached through a `crate::` prefix that is not needed
+  --> $DIR/redundant_crate_prefix.rs:24:5
+   |
+LL |     crate::mithqalite_base::num::modular::traits::Mod::mod_op(5u32, 3)
+   |     ^^^^^^^^^^^^^^^^^^^^^ help: remove the prefix: `mithqalite_base`
+
+error: aborting due to 3 previous errors
+

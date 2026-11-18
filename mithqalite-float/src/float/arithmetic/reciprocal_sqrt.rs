@@ -1,0 +1,1490 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the GNU MPFR Library.
+//
+//      Copyright 2008-2024 Free Software Foundation, Inc.
+//
+//      Contributed by the AriC and Caramba projects, INRIA.
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::InnerFloat::{Finite, Infinity, NaN, Zero};
+use crate::{
+    Float, emulate_float_to_float_fn, emulate_rational_to_float_fn, float_either_zero,
+    float_infinity, float_nan, float_zero,
+};
+use core::cmp::Ordering::{self, *};
+use core::cmp::max;
+use mithqalite_base::num::arithmetic::traits::{
+    IsPowerOf2, Parity, PowerOf2, Reciprocal, ReciprocalSqrt, ReciprocalSqrtAssign,
+};
+use mithqalite_base::num::basic::floats::PrimitiveFloat;
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::num::basic::traits::Infinity as InfinityTrait;
+use mithqalite_base::num::conversion::traits::{ExactFrom, RoundingFrom};
+use mithqalite_base::num::logic::traits::SignificantBits;
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_nz::natural::LIMB_HIGH_BIT;
+use mithqalite_nz::natural::arithmetic::float::reciprocal_sqrt::limbs_reciprocal_sqrt;
+use mithqalite_nz::natural::arithmetic::float::round::{
+    limbs_float_can_round, limbs_significand_slice_add_limb_in_place,
+};
+use mithqalite_nz::natural::{Natural, bit_to_limb_count_ceiling, limb_to_bit_count};
+use mithqalite_nz::platform::Limb;
+use mithqalite_q::Rational;
+
+impl Float {
+    /// Computes the reciprocal of the square root of a [`Float`], rounding the result to the
+    /// specified precision and with the specified rounding mode. The [`Float`] is taken by value.
+    /// An [`Ordering`] is also returned, indicating whether the rounded reciprocal square root is
+    /// less than, equal to, or greater than the exact square root. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,p,m) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},p,m)=\text{NaN}$
+    /// - $f(\infty,p,m)=0.0$
+    /// - $f(-\infty,p,m)=\text{NaN}$
+    /// - $f(0.0,p,m)=\infty$
+    /// - $f(-0.0,p,m)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::reciprocal_sqrt_prec`]
+    /// instead. If you know that your target precision is the precision of the input, consider
+    /// using [`Float::reciprocal_sqrt_round`] instead. If both of these things are true, consider
+    /// using [`Float::reciprocal_sqrt`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the given
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round(5, Floor);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.562");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round(5, Ceiling);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.594");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round(5, Nearest);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.562");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round(20, Floor);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418896");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round(20, Ceiling);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418991");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round(20, Nearest);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418991");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_prec_round(self, prec: u64, rm: RoundingMode) -> (Self, Ordering) {
+        self.reciprocal_sqrt_prec_round_ref(prec, rm)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`], rounding the result to the
+    /// specified precision and with the specified rounding mode. The [`Float`] is taken by
+    /// reference. An [`Ordering`] is also returned, indicating whether the rounded reciprocal
+    /// square root is less than, equal to, or greater than the exact square root. Although `NaN`s
+    /// are not comparable to any [`Float`], whenever this function returns a `NaN` it also returns
+    /// `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,p,m) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},p,m)=\text{NaN}$
+    /// - $f(\infty,p,m)=0.0$
+    /// - $f(-\infty,p,m)=\text{NaN}$
+    /// - $f(0.0,p,m)=\infty$
+    /// - $f(-0.0,p,m)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::reciprocal_sqrt_prec_ref`]
+    /// instead. If you know that your target precision is the precision of the input, consider
+    /// using [`Float::reciprocal_sqrt_round_ref`] instead. If both of these things are true,
+    /// consider using `(&Float).reciprocal_sqrt()`instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the given
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round_ref(5, Floor);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.562");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round_ref(5, Ceiling);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.594");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round_ref(5, Nearest);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.562");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round_ref(20, Floor);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418896");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round_ref(20, Ceiling);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418991");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_round_ref(20, Nearest);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418991");
+    /// assert_eq!(o, Greater);
+    /// ```
+    ///
+    /// This is mpfr_rec_sqrt from rec_sqrt.c, MPFR 4.3.0.
+    #[inline]
+    pub fn reciprocal_sqrt_prec_round_ref(&self, prec: u64, rm: RoundingMode) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        match self {
+            Self(NaN | Infinity { sign: false }) => (float_nan!(), Equal),
+            float_infinity!() => (float_zero!(), Equal),
+            float_either_zero!() => (float_infinity!(), Equal),
+            Self(Finite {
+                sign,
+                exponent: x_exp,
+                precision: x_prec,
+                significand: x,
+                ..
+            }) => {
+                if !sign {
+                    return (float_nan!(), Equal);
+                }
+                // Let u = U*2^e, where e = EXP(u), and 1/2 <= U < 1. If e is even, we compute an
+                // approximation of X of (4U)^{-1/2}, and the result is X*2^(-(e-2)/2) [case s=1].
+                // If e is odd, we compute an approximation of X of (2U)^{-1/2}, and the result is
+                // X*2^(-(e-1)/2) [case s=0].
+                //
+                // parity of the exponent of u
+                let mut s = i32::from(x_exp.even());
+                let in_len = bit_to_limb_count_ceiling(prec);
+                // for the first iteration, if rp + 11 fits into rn limbs, we round up up to a full
+                // limb to maximize the chance of rounding, while avoiding to allocate extra space
+                let mut working_prec = max(prec + 11, limb_to_bit_count(in_len));
+                let mut increment = Limb::WIDTH;
+                let mut out;
+                loop {
+                    let working_limbs = bit_to_limb_count_ceiling(working_prec);
+                    out = alloc::vec![0; working_limbs];
+                    limbs_reciprocal_sqrt(
+                        &mut out,
+                        working_prec,
+                        x.as_limbs_asc(),
+                        *x_prec,
+                        s == 1,
+                    );
+                    // If the input was not truncated, the error is at most one ulp; if the input
+                    // was truncated, the error is at most two ulps (see algorithms.tex).
+                    if limbs_float_can_round(
+                        &out,
+                        working_prec - u64::from(working_prec < *x_prec),
+                        prec,
+                        rm,
+                    ) {
+                        assert_ne!(rm, Exact, "Inexact float reciprocal square root");
+                        break;
+                    }
+                    // We detect only now the exact case where u = 2 ^ (2e), to avoid slowing down
+                    // the average case. This can happen only when the mantissa is exactly 1 / 2 and
+                    // the exponent is odd.
+                    if s == 0 && x.is_power_of_2() {
+                        let pl = limb_to_bit_count(working_limbs) - working_prec;
+                        // we should have x=111...111
+                        limbs_significand_slice_add_limb_in_place(&mut out, Limb::power_of_2(pl));
+                        *out.last_mut().unwrap() = LIMB_HIGH_BIT;
+                        s = 2;
+                        break;
+                    }
+                    working_prec += increment;
+                    increment = working_prec >> 1;
+                }
+                let reciprocal_sqrt = Self(Finite {
+                    sign: true,
+                    exponent: (s + 1 - x_exp) >> 1,
+                    precision: working_prec,
+                    significand: Natural::from_owned_limbs_asc(out),
+                });
+                Self::from_float_prec_round(reciprocal_sqrt, prec, rm)
+            }
+        }
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`], rounding the result to the
+    /// nearest value of the specified precision. The [`Float`] is taken by value. An [`Ordering`]
+    /// is also returned, indicating whether the rounded reciprocal square root is less than, equal
+    /// to, or greater than the exact square root. Although `NaN`s are not comparable to any
+    /// [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// If the reciprocal square root is equidistant from two [`Float`]s with the specified
+    /// precision, the [`Float`] with fewer 1s in its binary expansion is chosen. See
+    /// [`RoundingMode`] for a description of the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,p) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},p)=\text{NaN}$
+    /// - $f(\infty,p)=0.0$
+    /// - $f(-\infty,p)=\text{NaN}$
+    /// - $f(0.0,p)=\infty$
+    /// - $f(-0.0,p)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_prec_round`] instead. If you know that your target precision is the
+    /// precision of the input, consider using [`Float::reciprocal_sqrt`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec(5);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.562");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec(20);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418991");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_prec(self, prec: u64) -> (Self, Ordering) {
+        self.reciprocal_sqrt_prec_round(prec, Nearest)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`], rounding the result to the
+    /// nearest value of the specified precision. The [`Float`] is taken by reference. An
+    /// [`Ordering`] is also returned, indicating whether the rounded reciprocal square root is less
+    /// than, equal to, or greater than the exact square root. Although `NaN`s are not comparable to
+    /// any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// If the reciprocal square root is equidistant from two [`Float`]s with the specified
+    /// precision, the [`Float`] with fewer 1s in its binary expansion is chosen. See
+    /// [`RoundingMode`] for a description of the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,p) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},p)=\text{NaN}$
+    /// - $f(\infty,p)=0.0$
+    /// - $f(-\infty,p)=\text{NaN}$
+    /// - $f(0.0,p)=\infty$
+    /// - $f(-0.0,p)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_prec_round_ref`] instead. If you know that your target precision is
+    /// the precision of the input, consider using `(&Float).reciprocal_sqrt()` instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_ref(5);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.562");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_prec_ref(20);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418991");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_prec_ref(&self, prec: u64) -> (Self, Ordering) {
+        self.reciprocal_sqrt_prec_round_ref(prec, Nearest)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`], rounding the result with the
+    /// specified rounding mode. The [`Float`] is taken by value. An [`Ordering`] is also returned,
+    /// indicating whether the rounded reciprocal square root is less than, equal to, or greater
+    /// than the exact square root. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// The precision of the output is the precision of the input. See [`RoundingMode`] for a
+    /// description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,m) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$, where $p$ is the precision of the input.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$, where $p$ is the precision of the input.
+    ///
+    /// If the output has a precision, it is the precision of the input.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},m)=\text{NaN}$
+    /// - $f(\infty,m)=0.0$
+    /// - $f(-\infty,m)=\text{NaN}$
+    /// - $f(0.0,m)=\infty$
+    /// - $f(-0.0,m)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to specify an output precision, consider using
+    /// [`Float::reciprocal_sqrt_prec_round`] instead. If you know you'll be using the `Nearest`
+    /// rounding mode, consider using [`Float::reciprocal_sqrt`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.get_prec()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the input
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_round(Floor);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418958354775572");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_round(Ceiling);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418958354775661");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_round(Nearest);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418958354775661");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_round(self, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = self.significant_bits();
+        self.reciprocal_sqrt_prec_round(prec, rm)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`], rounding the result with the
+    /// specified rounding mode. The [`Float`] is taken by reference. An [`Ordering`] is also
+    /// returned, indicating whether the rounded reciprocal square root is less than, equal to, or
+    /// greater than the exact square root. Although `NaN`s are not comparable to any [`Float`],
+    /// whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// The precision of the output is the precision of the input. See [`RoundingMode`] for a
+    /// description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,m) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$, where $p$ is the precision of the input.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$, where $p$ is the precision of the input.
+    ///
+    /// If the output has a precision, it is the precision of the input.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},m)=\text{NaN}$
+    /// - $f(\infty,m)=0.0$
+    /// - $f(-\infty,m)=\text{NaN}$
+    /// - $f(0.0,m)=\infty$
+    /// - $f(-0.0,m)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to specify an output precision, consider using
+    /// [`Float::reciprocal_sqrt_prec_round_ref`] instead. If you know you'll be using the `Nearest`
+    /// rounding mode, consider using `(&Float).reciprocal_sqrt()` instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.get_prec()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the input
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_round_ref(Floor);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418958354775572");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_round_ref(Ceiling);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418958354775661");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (reciprocal_sqrt, o) = Float::from(PI).reciprocal_sqrt_round_ref(Nearest);
+    /// assert_eq!(reciprocal_sqrt.to_string(), "0.56418958354775661");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_round_ref(&self, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = self.significant_bits();
+        self.reciprocal_sqrt_prec_round_ref(prec, rm)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`] in place, rounding the result to
+    /// the specified precision and with the specified rounding mode. An [`Ordering`] is returned,
+    /// indicating whether the rounded reciprocal square root is less than, equal to, or greater
+    /// than the exact square root. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function sets the [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// x \gets 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 |xy|\rfloor-p+1}$.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// See the [`Float::reciprocal_sqrt_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::reciprocal_sqrt_prec_assign`]
+    /// instead. If you know that your target precision is the precision of the input, consider
+    /// using [`Float::reciprocal_sqrt_round_assign`] instead. If both of these things are true,
+    /// consider using [`Float::reciprocal_sqrt_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the given
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_round_assign(5, Floor), Less);
+    /// assert_eq!(x.to_string(), "0.562");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_round_assign(5, Ceiling), Greater);
+    /// assert_eq!(x.to_string(), "0.594");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_round_assign(5, Nearest), Less);
+    /// assert_eq!(x.to_string(), "0.562");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_round_assign(20, Floor), Less);
+    /// assert_eq!(x.to_string(), "0.56418896");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_round_assign(20, Ceiling), Greater);
+    /// assert_eq!(x.to_string(), "0.56418991");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_round_assign(20, Nearest), Greater);
+    /// assert_eq!(x.to_string(), "0.56418991");
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_prec_round_assign(&mut self, prec: u64, rm: RoundingMode) -> Ordering {
+        let (reciprocal_sqrt, o) = self.reciprocal_sqrt_prec_round_ref(prec, rm);
+        *self = reciprocal_sqrt;
+        o
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`] in place, rounding the result to
+    /// the nearest value of the specified precision. An [`Ordering`] is returned, indicating
+    /// whether the rounded square root is less than, equal to, or greater than the exact square
+    /// root. Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// If the reciprocal square root is equidistant from two [`Float`]s with the specified
+    /// precision, the [`Float`] with fewer 1s in its binary expansion is chosen. See
+    /// [`RoundingMode`] for a description of the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// x \gets 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// See the [`Float::reciprocal_sqrt_prec`] documentation for information on special cases,
+    /// overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_prec_round_assign`] instead. If you know that your target precision
+    /// is the precision of the input, consider using [`Float::reciprocal_sqrt`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_assign(5), Less);
+    /// assert_eq!(x.to_string(), "0.562");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_prec_assign(20), Greater);
+    /// assert_eq!(x.to_string(), "0.56418991");
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_prec_assign(&mut self, prec: u64) -> Ordering {
+        self.reciprocal_sqrt_prec_round_assign(prec, Nearest)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Float`] in place, rounding the result with
+    /// the specified rounding mode. An [`Ordering`] is returned, indicating whether the rounded
+    /// reciprocal square root is less than, equal to, or greater than the exact square root.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// The precision of the output is the precision of the input. See [`RoundingMode`] for a
+    /// description of the possible rounding modes.
+    ///
+    /// $$
+    /// x \gets 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// If the output has a precision, it is the precision of the input.
+    ///
+    /// See the [`Float::reciprocal_sqrt_round`] documentation for information on special cases,
+    /// overflow, and underflow.
+    ///
+    /// If you want to specify an output precision, consider using
+    /// [`Float::reciprocal_sqrt_prec_round_assign`] instead. If you know you'll be using the
+    /// `Nearest` rounding mode, consider using [`Float::reciprocal_sqrt_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.get_prec()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the input
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::f64::consts::PI;
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_round_assign(Floor), Less);
+    /// assert_eq!(x.to_string(), "0.56418958354775572");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_round_assign(Ceiling), Greater);
+    /// assert_eq!(x.to_string(), "0.56418958354775661");
+    ///
+    /// let mut x = Float::from(PI);
+    /// assert_eq!(x.reciprocal_sqrt_round_assign(Nearest), Greater);
+    /// assert_eq!(x.to_string(), "0.56418958354775661");
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_round_assign(&mut self, rm: RoundingMode) -> Ordering {
+        let prec = self.significant_bits();
+        self.reciprocal_sqrt_prec_round_assign(prec, rm)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Rational`], rounding the result to the
+    /// specified precision and with the specified rounding mode and returning the result as a
+    /// [`Float`]. The [`Rational`] is taken by value. An [`Ordering`] is also returned, indicating
+    /// whether the rounded reciprocal square root is less than, equal to, or greater than the exact
+    /// reciprocal square root. Although `NaN`s are not comparable to any [`Float`], whenever this
+    /// function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,p,m) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$.
+    /// - If $\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0.0,p,m)=\infty$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$ is
+    ///   returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_rational_prec`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n \log n + m \log m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `x.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the given
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (sqrt, o) =
+    ///     Float::reciprocal_sqrt_rational_prec_round(Rational::from_unsigneds(3u8, 5), 5, Floor);
+    /// assert_eq!(sqrt.to_string(), "1.25");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round(
+    ///     Rational::from_unsigneds(3u8, 5),
+    ///     5,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.31");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round(
+    ///     Rational::from_unsigneds(3u8, 5),
+    ///     5,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.31");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) =
+    ///     Float::reciprocal_sqrt_rational_prec_round(Rational::from_unsigneds(3u8, 5), 20, Floor);
+    /// assert_eq!(sqrt.to_string(), "1.2909927");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round(
+    ///     Rational::from_unsigneds(3u8, 5),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.2909946");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round(
+    ///     Rational::from_unsigneds(3u8, 5),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.2909946");
+    /// assert_eq!(o, Greater);
+    /// ```
+    pub fn reciprocal_sqrt_rational_prec_round(
+        x: Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        if x == 0u32 {
+            return (Self::INFINITY, Equal);
+        }
+        // Inverting a `Rational` is exact, so this rounds only once.
+        Self::sqrt_rational_prec_round(x.reciprocal(), prec, rm)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Rational`], rounding the result to the
+    /// specified precision and with the specified rounding mode and returning the result as a
+    /// [`Float`]. The [`Rational`] is taken by reference. An [`Ordering`] is also returned,
+    /// indicating whether the rounded reciprocal square root is less than, equal to, or greater
+    /// than the exact reciprocal square root. Although `NaN`s are not comparable to any [`Float`],
+    /// whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,p,m) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon| <
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p+1}$.
+    /// - If $\sqrt{x}$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0.0,p,m)=\infty$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$ is
+    ///   returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_rational_prec_ref`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n \log n + m \log m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `x.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result cannot be represented exactly with the given
+    /// precision.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round_ref(
+    ///     &Rational::from_unsigneds(3u8, 5),
+    ///     5,
+    ///     Floor,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.25");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round_ref(
+    ///     &Rational::from_unsigneds(3u8, 5),
+    ///     5,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.31");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round_ref(
+    ///     &Rational::from_unsigneds(3u8, 5),
+    ///     5,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.31");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round_ref(
+    ///     &Rational::from_unsigneds(3u8, 5),
+    ///     20,
+    ///     Floor,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.2909927");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round_ref(
+    ///     &Rational::from_unsigneds(3u8, 5),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.2909946");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec_round_ref(
+    ///     &Rational::from_unsigneds(3u8, 5),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(sqrt.to_string(), "1.2909946");
+    /// assert_eq!(o, Greater);
+    /// ```
+    pub fn reciprocal_sqrt_rational_prec_round_ref(
+        x: &Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        if *x == 0u32 {
+            return (Self::INFINITY, Equal);
+        }
+        // Inverting a `Rational` is exact, so this rounds only once.
+        Self::sqrt_rational_prec_round(x.reciprocal(), prec, rm)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Rational`], rounding the result to the
+    /// nearest value of the specified precision and returning the result as a [`Float`]. The
+    /// [`Rational`] is taken by value. An [`Ordering`] is also returned, indicating whether the
+    /// rounded reciprocal square root is less than, equal to, or greater than the exact reciprocal
+    /// square root. Although `NaN`s are not comparable to any [`Float`], whenever this function
+    /// returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// If the reciprocal square root is equidistant from two [`Float`]s with the specified
+    /// precision, the [`Float`] with fewer 1s in its binary expansion is chosen. See
+    /// [`RoundingMode`] for a description of the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,p) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0.0,p)=\infty$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,p)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,p)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$ is
+    ///   returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,p)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,p)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,p)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_rational_prec_round`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n \log n + m \log m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `x.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec(Rational::from_unsigneds(3u8, 5), 5);
+    /// assert_eq!(sqrt.to_string(), "1.31");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) = Float::reciprocal_sqrt_rational_prec(Rational::from_unsigneds(3u8, 5), 20);
+    /// assert_eq!(sqrt.to_string(), "1.2909946");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_rational_prec(x: Rational, prec: u64) -> (Self, Ordering) {
+        Self::reciprocal_sqrt_rational_prec_round(x, prec, Nearest)
+    }
+
+    /// Computes the reciprocal of the square root of a [`Rational`], rounding the result to the
+    /// nearest value of the specified precision and returning the result as a [`Float`]. The
+    /// [`Rational`] is taken by reference. An [`Ordering`] is also returned, indicating whether the
+    /// rounded reciprocal square root is less than, equal to, or greater than the exact reciprocal
+    /// square root. Although `NaN`s are not comparable to any [`Float`], whenever this function
+    /// returns a `NaN` it also returns `Equal`.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// If the reciprocal square root is equidistant from two [`Float`]s with the specified
+    /// precision, the [`Float`] with fewer 1s in its binary expansion is chosen. See
+    /// [`RoundingMode`] for a description of the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,p) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0.0,p)=\infty$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,p)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,p)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$ is
+    ///   returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,p)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,p)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,p)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_rational_prec_round_ref`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n \log n \log\log n + m \log m \log\log m)$
+    ///
+    /// $M(n, m) = O(n \log n + m \log m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `x.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (sqrt, o) =
+    ///     Float::reciprocal_sqrt_rational_prec_ref(&Rational::from_unsigneds(3u8, 5), 5);
+    /// assert_eq!(sqrt.to_string(), "1.31");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt, o) =
+    ///     Float::reciprocal_sqrt_rational_prec_ref(&Rational::from_unsigneds(3u8, 5), 20);
+    /// assert_eq!(sqrt.to_string(), "1.2909946");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn reciprocal_sqrt_rational_prec_ref(x: &Rational, prec: u64) -> (Self, Ordering) {
+        Self::reciprocal_sqrt_rational_prec_round_ref(x, prec, Nearest)
+    }
+}
+
+impl ReciprocalSqrt for Float {
+    type Output = Self;
+
+    /// Computes the reciprocal of the square root of a [`Float`], taking it by value.
+    ///
+    /// If the output has a precision, it is the precision of the input. If the reciprocal square
+    /// root is equidistant from two [`Float`]s with the specified precision, the [`Float`] with
+    /// fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of the
+    /// `Nearest` rounding mode.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// $$
+    /// f(x) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN})=\text{NaN}$
+    /// - $f(\infty)=0.0$
+    /// - $f(-\infty)=\text{NaN}$
+    /// - $f(0.0)=\infty$
+    /// - $f(-0.0)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_prec`] instead. If you want to specify the output precision,
+    /// consider using [`Float::reciprocal_sqrt_round`]. If you want both of these things, consider
+    /// using [`Float::reciprocal_sqrt_prec_round`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.get_prec()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::ReciprocalSqrt;
+    /// use mithqalite_base::num::basic::traits::{Infinity, NaN, NegativeInfinity, Zero};
+    /// use mithqalite_float::Float;
+    ///
+    /// assert!(Float::NAN.reciprocal_sqrt().is_nan());
+    /// assert_eq!(Float::INFINITY.reciprocal_sqrt(), Float::ZERO);
+    /// assert!(Float::NEGATIVE_INFINITY.reciprocal_sqrt().is_nan());
+    /// assert_eq!(Float::from(1.5).reciprocal_sqrt().to_string(), "0.75");
+    /// assert!(Float::from(-1.5).reciprocal_sqrt().is_nan());
+    /// ```
+    #[inline]
+    fn reciprocal_sqrt(self) -> Self {
+        let prec = self.significant_bits();
+        self.reciprocal_sqrt_prec_round(prec, Nearest).0
+    }
+}
+
+impl ReciprocalSqrt for &Float {
+    type Output = Float;
+
+    /// Computes the reciprocal of the square root of a [`Float`], taking it by reference.
+    ///
+    /// If the output has a precision, it is the precision of the input. If the reciprocal square
+    /// root is equidistant from two [`Float`]s with the specified precision, the [`Float`] with
+    /// fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of the
+    /// `Nearest` rounding mode.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// $$
+    /// f(x) = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN})=\text{NaN}$
+    /// - $f(\infty)=0.0$
+    /// - $f(-\infty)=\text{NaN}$
+    /// - $f(0.0)=\infty$
+    /// - $f(-0.0)=\infty$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_prec_ref`] instead. If you want to specify the output precision,
+    /// consider using [`Float::reciprocal_sqrt_round_ref`]. If you want both of these things,
+    /// consider using [`Float::reciprocal_sqrt_prec_round_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.get_prec()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::ReciprocalSqrt;
+    /// use mithqalite_base::num::basic::traits::{Infinity, NaN, NegativeInfinity, Zero};
+    /// use mithqalite_float::Float;
+    ///
+    /// assert!((&Float::NAN).reciprocal_sqrt().is_nan());
+    /// assert_eq!((&Float::INFINITY).reciprocal_sqrt(), Float::ZERO);
+    /// assert!((&Float::NEGATIVE_INFINITY).reciprocal_sqrt().is_nan());
+    /// assert_eq!((&Float::from(1.5)).reciprocal_sqrt().to_string(), "0.75");
+    /// assert!((&Float::from(-1.5)).reciprocal_sqrt().is_nan());
+    /// ```
+    #[inline]
+    fn reciprocal_sqrt(self) -> Float {
+        let prec = self.significant_bits();
+        self.reciprocal_sqrt_prec_round_ref(prec, Nearest).0
+    }
+}
+
+impl ReciprocalSqrtAssign for Float {
+    /// Computes the reciprocal of the square root of a [`Float`] in place.
+    ///
+    /// If the output has a precision, it is the precision of the input. If the reciprocal square
+    /// root is equidistant from two [`Float`]s with the specified precision, the [`Float`] with
+    /// fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of the
+    /// `Nearest` rounding mode.
+    ///
+    /// The reciprocal square root of any nonzero negative number is `NaN`.
+    ///
+    /// Using this function is more accurate than taking the square root and then the reciprocal, or
+    /// vice versa.
+    ///
+    /// $$
+    /// x\gets = 1/\sqrt{x}+\varepsilon.
+    /// $$
+    /// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be
+    ///   0.
+    /// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   1/\sqrt{x}\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// See the [`Float::reciprocal_sqrt`] documentation for information on special cases, overflow,
+    /// and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::reciprocal_sqrt_prec_assign`] instead. If you want to specify the output precision,
+    /// consider using [`Float::reciprocal_sqrt_round_assign`]. If you want both of these things,
+    /// consider using [`Float::reciprocal_sqrt_prec_round_assign`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.get_prec()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::ReciprocalSqrtAssign;
+    /// use mithqalite_base::num::basic::traits::{Infinity, NaN, NegativeInfinity, Zero};
+    /// use mithqalite_float::Float;
+    ///
+    /// let mut x = Float::NAN;
+    /// x.reciprocal_sqrt_assign();
+    /// assert!(x.is_nan());
+    ///
+    /// let mut x = Float::INFINITY;
+    /// x.reciprocal_sqrt_assign();
+    /// assert_eq!(x, Float::ZERO);
+    ///
+    /// let mut x = Float::NEGATIVE_INFINITY;
+    /// x.reciprocal_sqrt_assign();
+    /// assert!(x.is_nan());
+    ///
+    /// let mut x = Float::from(1.5);
+    /// x.reciprocal_sqrt_assign();
+    /// assert_eq!(x.to_string(), "0.75");
+    ///
+    /// let mut x = Float::from(-1.5);
+    /// x.reciprocal_sqrt_assign();
+    /// assert!(x.is_nan());
+    /// ```
+    #[inline]
+    fn reciprocal_sqrt_assign(&mut self) {
+        let prec = self.significant_bits();
+        self.reciprocal_sqrt_prec_round_assign(prec, Nearest);
+    }
+}
+
+/// Computes the reciprocal of the square root of a primitive float. Using this function is more
+/// accurate than using `powf(0.5)` or taking the square root and then the reciprocal, or vice
+/// versa.
+///
+/// If the reciprocal square root is equidistant from two primitive floats, the primitive float with
+/// fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of the
+/// `Nearest` rounding mode.
+///
+/// The reciprocal square root of any nonzero negative number is `NaN`.
+///
+/// $$
+/// f(x) = 1/\sqrt{x}+\varepsilon.
+/// $$
+/// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be 0.
+/// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+///   1/\sqrt{x}\rfloor-p}$, where $p$ is precision of the output (typically 24 if `T` is a [`f32`]
+///   and 53 if `T` is a [`f64`], but less if the output is subnormal).
+///
+/// Special cases:
+/// - $f(\text{NaN})=\text{NaN}$
+/// - $f(\infty)=0.0$
+/// - $f(-\infty)=\text{NaN}$
+/// - $f(0.0)=\infty$
+/// - $f(-0.0)=\infty$
+///
+/// Neither overflow nor underflow is possible.
+///
+/// # Worst-case complexity
+/// Constant time and additional memory.
+///
+/// # Examples
+/// ```
+/// use mithqalite_base::num::basic::traits::NegativeInfinity;
+/// use mithqalite_base::num::float::NiceFloat;
+/// use mithqalite_float::float::arithmetic::reciprocal_sqrt::primitive_float_reciprocal_sqrt;
+///
+/// assert!(primitive_float_reciprocal_sqrt(f32::NAN).is_nan());
+/// assert_eq!(
+///     NiceFloat(primitive_float_reciprocal_sqrt(f32::INFINITY)),
+///     NiceFloat(0.0)
+/// );
+/// assert!(primitive_float_reciprocal_sqrt(f32::NEGATIVE_INFINITY).is_nan());
+/// assert_eq!(
+///     NiceFloat(primitive_float_reciprocal_sqrt(3.0f32)),
+///     NiceFloat(0.57735026)
+/// );
+/// assert!(primitive_float_reciprocal_sqrt(-3.0f32).is_nan());
+/// ```
+#[inline]
+#[allow(clippy::type_repetition_in_bounds)]
+pub fn primitive_float_reciprocal_sqrt<T: PrimitiveFloat>(x: T) -> T
+where
+    Float: From<T> + PartialOrd<T>,
+    for<'a> T: ExactFrom<&'a Float> + RoundingFrom<&'a Float>,
+{
+    emulate_float_to_float_fn(Float::reciprocal_sqrt_prec, x)
+}
+
+/// Computes the reciprocal of the square root of a [`Rational`], returning a primitive float
+/// result.
+///
+/// If the reciprocal square root is equidistant from two primitive floats, the primitive float with
+/// fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of the
+/// `Nearest` rounding mode.
+///
+/// The reciprocal square root of any negative number is `NaN`.
+///
+/// $$
+/// f(x) = 1/\sqrt{x}+\varepsilon.
+/// $$
+/// - If $1/\sqrt{x}$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to be 0.
+/// - If $1/\sqrt{x}$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+///   1/\sqrt{x}\rfloor-p}$, where $p$ is precision of the output (typically 24 if `T` is a [`f32`]
+///   and 53 if `T` is a [`f64`], but less if the output is subnormal).
+///
+/// Special cases:
+/// - $f(0)=\infty$
+///
+/// Overflow:
+/// - If the absolute value of the result is too large to represent, $\infty$ is returned instead.
+/// - If the absolute value of the result is too small to represent, 0.0 is returned instead.
+///
+/// Since the result is never negative, negative overflow and underflow cannot occur.
+///
+/// # Worst-case complexity
+/// $T(m) = O(m \log m \log\log m)$
+///
+/// $M(m) = O(m \log m)$
+///
+/// where $T$ is time, $M$ is additional memory, and $m$ is `x.significant_bits()`.
+///
+/// # Examples
+/// ```
+/// use mithqalite_base::num::basic::traits::Zero;
+/// use mithqalite_base::num::float::NiceFloat;
+/// use mithqalite_float::float::arithmetic::reciprocal_sqrt::*;
+/// use mithqalite_q::Rational;
+///
+/// assert_eq!(
+///     NiceFloat(primitive_float_reciprocal_sqrt_rational::<f64>(
+///         &Rational::ZERO
+///     )),
+///     NiceFloat(f64::INFINITY)
+/// );
+/// assert_eq!(
+///     NiceFloat(primitive_float_reciprocal_sqrt_rational::<f64>(
+///         &Rational::from_unsigneds(1u8, 3)
+///     )),
+///     NiceFloat(1.7320508075688772)
+/// );
+/// assert_eq!(
+///     NiceFloat(primitive_float_reciprocal_sqrt_rational::<f64>(
+///         &Rational::from(10000)
+///     )),
+///     NiceFloat(0.01)
+/// );
+/// assert_eq!(
+///     NiceFloat(primitive_float_reciprocal_sqrt_rational::<f64>(
+///         &Rational::from(-10000)
+///     )),
+///     NiceFloat(f64::NAN)
+/// );
+/// ```
+#[inline]
+#[allow(clippy::type_repetition_in_bounds)]
+pub fn primitive_float_reciprocal_sqrt_rational<T: PrimitiveFloat>(x: &Rational) -> T
+where
+    Float: PartialOrd<T>,
+    for<'a> T: ExactFrom<&'a Float> + RoundingFrom<&'a Float>,
+{
+    emulate_rational_to_float_fn(Float::reciprocal_sqrt_rational_prec_ref, x)
+}

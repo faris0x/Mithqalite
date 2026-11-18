@@ -1,0 +1,114 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::num::arithmetic::traits::PowerOf2;
+use mithqalite_base::num::conversion::traits::ExactFrom;
+use mithqalite_base::num::logic::traits::BitAccess;
+use mithqalite_base::test_util::bench::bucketers::pair_2_bucketer;
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::generators::unsigned_vec_unsigned_pair_gen_var_20;
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_nz::integer::Integer;
+use mithqalite_nz::integer::logic::bit_access::limbs_set_bit_neg;
+use mithqalite_nz::test_util::bench::bucketers::pair_2_pair_integer_bit_u64_max_bucketer;
+use mithqalite_nz::test_util::generators::{
+    integer_unsigned_pair_gen_var_2, integer_unsigned_pair_gen_var_2_rm,
+};
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_limbs_set_bit_neg);
+    register_demo!(runner, demo_integer_set_bit);
+
+    register_bench!(runner, benchmark_limbs_set_bit_neg);
+    register_bench!(runner, benchmark_integer_set_bit_library_comparison);
+    register_bench!(runner, benchmark_integer_set_bit_algorithms);
+}
+
+fn demo_limbs_set_bit_neg(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (mut xs, index) in unsigned_vec_unsigned_pair_gen_var_20()
+        .get(gm, config)
+        .take(limit)
+    {
+        let old_xs = xs.clone();
+        limbs_set_bit_neg(&mut xs, index);
+        println!("xs := {old_xs:?}; limbs_set_bit_neg(&mut xs, {index}); xs = {xs:?}");
+    }
+}
+
+fn demo_integer_set_bit(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (mut n, index) in integer_unsigned_pair_gen_var_2()
+        .get(gm, config)
+        .take(limit)
+    {
+        let n_old = n.clone();
+        n.set_bit(index);
+        println!("x := {n_old}; x.set_bit({index}); x = {n}");
+    }
+}
+
+fn benchmark_limbs_set_bit_neg(gm: GenMode, config: &GenConfig, limit: usize, file_name: &str) {
+    run_benchmark(
+        "limbs_set_bit_neg(&mut [Limb], u64)",
+        BenchmarkType::Single,
+        unsigned_vec_unsigned_pair_gen_var_20().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &pair_2_bucketer("index"),
+        &mut [("Malachite", &mut |(mut xs, index)| {
+            no_out!(limbs_set_bit_neg(&mut xs, index));
+        })],
+    );
+}
+
+fn benchmark_integer_set_bit_library_comparison(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Integer.set_bit(u64)",
+        BenchmarkType::LibraryComparison,
+        integer_unsigned_pair_gen_var_2_rm().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &pair_2_pair_integer_bit_u64_max_bucketer("x", "index"),
+        &mut [
+            ("Malachite", &mut |(_, (mut n, index))| n.set_bit(index)),
+            ("rug", &mut |((mut n, index), _)| {
+                no_out!(n.set_bit(u32::exact_from(index), true));
+            }),
+        ],
+    );
+}
+
+fn benchmark_integer_set_bit_algorithms(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Integer.set_bit(u64)",
+        BenchmarkType::Algorithms,
+        integer_unsigned_pair_gen_var_2().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &pair_2_bucketer("index"),
+        &mut [
+            ("default", &mut |(mut n, index)| n.set_bit(index)),
+            ("using bitwise or", &mut |(mut n, index)| {
+                n |= Integer::power_of_2(index);
+            }),
+        ],
+    );
+}

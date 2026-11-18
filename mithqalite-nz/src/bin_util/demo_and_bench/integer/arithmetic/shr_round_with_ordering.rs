@@ -1,0 +1,127 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::num::arithmetic::traits::{ShrRoundWithOrdering, ShrRoundWithOrderingAssign};
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_nz::test_util::bench::bucketers::quadruple_1_integer_bit_bucketer;
+use mithqalite_nz::test_util::generators::*;
+use mithqalite_nz::test_util::integer::arithmetic::shr_round_with_ordering::*;
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_integer_shr_round_with_ordering);
+    register_demo!(runner, demo_integer_shr_round_with_ordering_ref);
+    register_demo!(runner, demo_integer_shr_round_with_ordering_assign);
+
+    register_bench!(
+        runner,
+        benchmark_integer_shr_round_with_ordering_evaluation_strategy
+    );
+    register_bench!(runner, benchmark_integer_shr_round_with_ordering_algorithms);
+}
+
+fn demo_integer_shr_round_with_ordering(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, bits, rm, o) in integer_unsigned_rounding_mode_ordering_quadruple_gen_var_1()
+        .get(gm, config)
+        .take(limit)
+    {
+        let x_old = x.clone();
+        println!(
+            "({x_old}).shr_round_with_ordering({bits}, {rm}, {o:?}) = {:?}",
+            x.shr_round_with_ordering(bits, rm, o)
+        );
+    }
+}
+
+fn demo_integer_shr_round_with_ordering_ref(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, bits, rm, o) in integer_unsigned_rounding_mode_ordering_quadruple_gen_var_1()
+        .get(gm, config)
+        .take(limit)
+    {
+        println!(
+            "(&{x}).shr_round_with_ordering({bits}, {rm}, {o:?}) = {:?}",
+            (&x).shr_round_with_ordering(bits, rm, o)
+        );
+    }
+}
+
+fn demo_integer_shr_round_with_ordering_assign(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (mut x, bits, rm, o) in integer_unsigned_rounding_mode_ordering_quadruple_gen_var_1()
+        .get(gm, config)
+        .take(limit)
+    {
+        let old = x.clone();
+        let p = x.shr_round_with_ordering_assign(bits, rm, o);
+        println!(
+            "x := {old}; x.shr_round_with_ordering_assign({bits}, {rm}, {o:?}) = {p:?}; x = {x}"
+        );
+    }
+}
+
+fn benchmark_integer_shr_round_with_ordering_evaluation_strategy(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Integer.shr_round_with_ordering(u64, RoundingMode, Ordering)",
+        BenchmarkType::EvaluationStrategy,
+        integer_unsigned_rounding_mode_ordering_quadruple_gen_var_1().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &quadruple_1_integer_bit_bucketer("x"),
+        &mut [
+            (
+                "Integer.shr_round_with_ordering(u64, RoundingMode, Ordering)",
+                &mut |(x, bits, rm, o)| {
+                    no_out!(x.shr_round_with_ordering(bits, rm, o));
+                },
+            ),
+            (
+                "(&Integer).shr_round_with_ordering(u64, RoundingMode, Ordering)",
+                &mut |(x, bits, rm, o)| {
+                    no_out!((&x).shr_round_with_ordering(bits, rm, o));
+                },
+            ),
+            (
+                "Integer.shr_round_with_ordering_assign(u64, RoundingMode, Ordering)",
+                &mut |(mut x, bits, rm, o)| {
+                    no_out!(x.shr_round_with_ordering_assign(bits, rm, o));
+                },
+            ),
+        ],
+    );
+}
+
+fn benchmark_integer_shr_round_with_ordering_algorithms(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Integer.shr_round_with_ordering(u64, RoundingMode, Ordering)",
+        BenchmarkType::Algorithms,
+        integer_unsigned_rounding_mode_ordering_quadruple_gen_var_1().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &quadruple_1_integer_bit_bucketer("x"),
+        &mut [
+            ("default", &mut |(x, bits, rm, o)| {
+                no_out!((&x).shr_round_with_ordering(bits, rm, o));
+            }),
+            ("naive", &mut |(x, bits, rm, o)| {
+                no_out!(integer_shr_round_with_ordering_naive(&x, bits, rm, o));
+            }),
+        ],
+    );
+}

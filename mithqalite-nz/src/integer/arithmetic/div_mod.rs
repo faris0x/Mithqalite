@@ -1,0 +1,1562 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::integer::Integer;
+use crate::natural::Natural;
+use crate::natural::arithmetic::div_mod::DivModData;
+use mithqalite_base::num::arithmetic::traits::{
+    CeilingDivAssignMod, CeilingDivAssignNegMod, CeilingDivMod, CeilingDivNegMod, DivAssignMod,
+    DivAssignModPrecomputed, DivAssignRem, DivMod, DivModPrecomputed, DivRem,
+};
+use mithqalite_base::num::basic::traits::One;
+
+impl DivMod<Self> for Integer {
+    type DivOutput = Self;
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both by value and returning the
+    /// quotient and remainder. The quotient is rounded towards negative infinity, and the remainder
+    /// has the same sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lfloor \frac{x}{y} \right \rfloor, \space
+    /// x - y\left \lfloor \frac{x}{y} \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -3 * -10 + -7 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-3, -7)"
+    /// );
+    ///
+    /// // -3 * 10 + 7 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-3, 7)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    #[inline]
+    fn div_mod(mut self, other: Self) -> (Self, Self) {
+        let r = self.div_assign_mod(other);
+        (self, r)
+    }
+}
+
+impl DivMod<&Self> for Integer {
+    type DivOutput = Self;
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking the first by value and the second by
+    /// reference and returning the quotient and remainder. The quotient is rounded towards negative
+    /// infinity, and the remainder has the same sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lfloor \frac{x}{y} \right \rfloor, \space
+    /// x - y\left \lfloor \frac{x}{y} \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -3 * -10 + -7 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-3, -7)"
+    /// );
+    ///
+    /// // -3 * 10 + 7 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-3, 7)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    #[inline]
+    fn div_mod(mut self, other: &Self) -> (Self, Self) {
+        let r = self.div_assign_mod(other);
+        (self, r)
+    }
+}
+
+impl DivMod<Integer> for &Integer {
+    type DivOutput = Integer;
+    type ModOutput = Integer;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking the first by reference and the second
+    /// by value and returning the quotient and remainder. The quotient is rounded towards negative
+    /// infinity, and the remainder has the same sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lfloor \frac{x}{y} \right \rfloor, \space
+    /// x - y\left \lfloor \frac{x}{y} \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -3 * -10 + -7 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-3, -7)"
+    /// );
+    ///
+    /// // -3 * 10 + 7 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-3, 7)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    fn div_mod(self, other: Integer) -> (Integer, Integer) {
+        let q_sign = self.sign == other.sign;
+        let (q, r) = if q_sign {
+            (&self.abs).div_mod(other.abs)
+        } else {
+            (&self.abs).ceiling_div_neg_mod(other.abs)
+        };
+        (
+            Integer::from_sign_and_abs(q_sign, q),
+            Integer::from_sign_and_abs(other.sign, r),
+        )
+    }
+}
+
+impl DivMod<&Integer> for &Integer {
+    type DivOutput = Integer;
+    type ModOutput = Integer;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both by reference and returning the
+    /// quotient and remainder. The quotient is rounded towards negative infinity, and the remainder
+    /// has the same sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lfloor \frac{x}{y} \right \rfloor, \space
+    /// x - y\left \lfloor \frac{x}{y} \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -3 * -10 + -7 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-3, -7)"
+    /// );
+    ///
+    /// // -3 * 10 + 7 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-3, 7)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    fn div_mod(self, other: &Integer) -> (Integer, Integer) {
+        let q_sign = self.sign == other.sign;
+        let (q, r) = if q_sign {
+            (&self.abs).div_mod(&other.abs)
+        } else {
+            (&self.abs).ceiling_div_neg_mod(&other.abs)
+        };
+        (
+            Integer::from_sign_and_abs(q_sign, q),
+            Integer::from_sign_and_abs(other.sign, r),
+        )
+    }
+}
+
+impl DivAssignMod<Self> for Integer {
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`] in place, taking the [`Integer`] on the
+    /// right-hand side by value and returning the remainder. The quotient is rounded towards
+    /// negative infinity, and the remainder has the same sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = x - y\left \lfloor \frac{x}{y} \right \rfloor,
+    /// $$
+    /// $$
+    /// x \gets \left \lfloor \frac{x}{y} \right \rfloor.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivAssignMod;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_mod(Integer::from(10)), 3);
+    /// assert_eq!(x, 2);
+    ///
+    /// // -3 * -10 + -7 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_mod(Integer::from(-10)), -7);
+    /// assert_eq!(x, -3);
+    ///
+    /// // -3 * 10 + 7 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_mod(Integer::from(10)), 7);
+    /// assert_eq!(x, -3);
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_mod(Integer::from(-10)), -3);
+    /// assert_eq!(x, 2);
+    /// ```
+    fn div_assign_mod(&mut self, other: Self) -> Self {
+        let r = if self.sign == other.sign {
+            self.sign = true;
+            self.abs.div_assign_mod(other.abs)
+        } else {
+            let r = self.abs.ceiling_div_assign_neg_mod(other.abs);
+            if self.abs != 0u32 {
+                self.sign = false;
+            }
+            r
+        };
+        Self::from_sign_and_abs(other.sign, r)
+    }
+}
+
+impl DivAssignMod<&Self> for Integer {
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`] in place, taking the [`Integer`] on the
+    /// right-hand side by reference and returning the remainder. The quotient is rounded towards
+    /// negative infinity, and the remainder has the same sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = x - y\left \lfloor \frac{x}{y} \right \rfloor,
+    /// $$
+    /// $$
+    /// x \gets \left \lfloor \frac{x}{y} \right \rfloor.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivAssignMod;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_mod(&Integer::from(10)), 3);
+    /// assert_eq!(x, 2);
+    ///
+    /// // -3 * -10 + -7 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_mod(&Integer::from(-10)), -7);
+    /// assert_eq!(x, -3);
+    ///
+    /// // -3 * 10 + 7 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_mod(&Integer::from(10)), 7);
+    /// assert_eq!(x, -3);
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_mod(&Integer::from(-10)), -3);
+    /// assert_eq!(x, 2);
+    /// ```
+    fn div_assign_mod(&mut self, other: &Self) -> Self {
+        let r = if self.sign == other.sign {
+            self.sign = true;
+            self.abs.div_assign_mod(&other.abs)
+        } else {
+            let r = self.abs.ceiling_div_assign_neg_mod(&other.abs);
+            if self.abs != 0u32 {
+                self.sign = false;
+            }
+            r
+        };
+        Self::from_sign_and_abs(other.sign, r)
+    }
+}
+
+// # Worst-case complexity
+// $T(n) = O(n \log n \log\log n)$
+//
+// $M(n) = O(n \log n)$
+//
+// where $T$ is time, $M$ is additional memory, and $n$ is `x.significant_bits()`.
+fn div_mod_precomputed_integers(
+    x: &Integer,
+    other: &Integer,
+    data: &DivModData,
+) -> (Integer, Integer) {
+    let q_sign = x.sign == other.sign;
+    let (mut q, mut r) = (&x.abs).div_mod_precomputed(&other.abs, data);
+    if !q_sign && r != 0u32 {
+        // The floor of the negative quotient is one less than the negated floor of the positive
+        // quotient, and the remainder is adjusted to have the divisor's sign.
+        q += Natural::ONE;
+        r = &other.abs - r;
+    }
+    (
+        Integer::from_sign_and_abs(q_sign, q),
+        Integer::from_sign_and_abs(other.sign, r),
+    )
+}
+
+macro_rules! integer_precompute_div_mod_data_doc {
+    ($f:item) => {
+        /// Precomputes data for division by an [`Integer`]. See `div_mod_precomputed` and
+        /// [`div_assign_mod_precomputed`](
+        /// mithqalite_base::num::arithmetic::traits::DivAssignModPrecomputed).
+        ///
+        /// The data depends only on the absolute value of the divisor.
+        ///
+        /// # Worst-case complexity
+        /// $T(n) = O(n \log n \log\log n)$
+        ///
+        /// $M(n) = O(n \log n)$
+        ///
+        /// where $T$ is time, $M$ is additional memory, and $n$ is `other.significant_bits()`.
+        ///
+        /// # Panics
+        /// Panics if `other` is zero.
+        $f
+    };
+}
+
+macro_rules! integer_div_mod_precomputed_doc {
+    ($f:item) => {
+        /// Divides an [`Integer`] by another [`Integer`], returning the quotient and remainder. The
+        /// quotient is rounded towards negative infinity, and the remainder has the same sign as
+        /// the second [`Integer`].
+        ///
+        /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+        ///
+        /// Some precomputed data is provided; this speeds up computations involving several
+        /// divisions by the same divisor. The precomputed data should be obtained using
+        /// [`precompute_div_mod_data`](DivModPrecomputed::precompute_div_mod_data), applied to the
+        /// same divisor or to its negative.
+        ///
+        /// $$
+        /// f(x, y) = \left ( \left \lfloor \frac{x}{y} \right \rfloor, \space
+        /// x - y\left \lfloor \frac{x}{y} \right \rfloor \right ).
+        /// $$
+        ///
+        /// # Worst-case complexity
+        /// $T(n) = O(n \log n \log\log n)$
+        ///
+        /// $M(n) = O(n \log n)$
+        ///
+        /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+        ///
+        /// # Panics
+        /// May panic if `data` was not computed from `other` or its negative.
+        ///
+        /// # Examples
+        /// ```
+        /// use mithqalite_base::num::arithmetic::traits::DivModPrecomputed;
+        /// use mithqalite_base::strings::ToDebugString;
+        /// use mithqalite_nz::integer::Integer;
+        ///
+        /// let d = Integer::from(10);
+        /// let data = Integer::precompute_div_mod_data(&d);
+        /// // 2 * 10 + 3 = 23
+        /// assert_eq!(
+        ///     Integer::from(23)
+        ///         .div_mod_precomputed(&d, &data)
+        ///         .to_debug_string(),
+        ///     "(2, 3)"
+        /// );
+        /// // -3 * 10 + 7 = -23
+        /// assert_eq!(
+        ///     Integer::from(-23)
+        ///         .div_mod_precomputed(&d, &data)
+        ///         .to_debug_string(),
+        ///     "(-3, 7)"
+        /// );
+        ///
+        /// let d = Integer::from(-10);
+        /// let data = Integer::precompute_div_mod_data(&d);
+        /// // -3 * -10 + -7 = 23
+        /// assert_eq!(
+        ///     Integer::from(23)
+        ///         .div_mod_precomputed(&d, &data)
+        ///         .to_debug_string(),
+        ///     "(-3, -7)"
+        /// );
+        /// // 2 * -10 + -3 = -23
+        /// assert_eq!(
+        ///     Integer::from(-23)
+        ///         .div_mod_precomputed(&d, &data)
+        ///         .to_debug_string(),
+        ///     "(2, -3)"
+        /// );
+        /// ```
+        $f
+    };
+}
+
+impl DivModPrecomputed<Self> for Integer {
+    type DivOutput = Self;
+    type ModOutput = Self;
+    type Data = DivModData;
+
+    integer_precompute_div_mod_data_doc! {
+        #[inline]
+        fn precompute_div_mod_data(other: &Self) -> DivModData {
+            Natural::precompute_div_mod_data(&other.abs)
+        }
+    }
+
+    integer_div_mod_precomputed_doc! {
+        #[inline]
+        fn div_mod_precomputed(self, other: Self, data: &DivModData) -> (Self, Self) {
+            div_mod_precomputed_integers(&self, &other, data)
+        }
+    }
+}
+
+impl DivModPrecomputed<&Self> for Integer {
+    type DivOutput = Self;
+    type ModOutput = Self;
+    type Data = DivModData;
+
+    integer_precompute_div_mod_data_doc! {
+        #[inline]
+        fn precompute_div_mod_data(other: &&Self) -> DivModData {
+            Natural::precompute_div_mod_data(&other.abs)
+        }
+    }
+
+    integer_div_mod_precomputed_doc! {
+        #[inline]
+        fn div_mod_precomputed(self, other: &Self, data: &DivModData) -> (Self, Self) {
+            div_mod_precomputed_integers(&self, other, data)
+        }
+    }
+}
+
+impl DivModPrecomputed<Integer> for &Integer {
+    type DivOutput = Integer;
+    type ModOutput = Integer;
+    type Data = DivModData;
+
+    integer_precompute_div_mod_data_doc! {
+        #[inline]
+        fn precompute_div_mod_data(other: &Integer) -> DivModData {
+            Natural::precompute_div_mod_data(&other.abs)
+        }
+    }
+
+    integer_div_mod_precomputed_doc! {
+        #[inline]
+        fn div_mod_precomputed(self, other: Integer, data: &DivModData) -> (Integer, Integer) {
+            div_mod_precomputed_integers(self, &other, data)
+        }
+    }
+}
+
+impl DivModPrecomputed<&Integer> for &Integer {
+    type DivOutput = Integer;
+    type ModOutput = Integer;
+    type Data = DivModData;
+
+    integer_precompute_div_mod_data_doc! {
+        #[inline]
+        fn precompute_div_mod_data(other: &&Integer) -> DivModData {
+            Natural::precompute_div_mod_data(&other.abs)
+        }
+    }
+
+    integer_div_mod_precomputed_doc! {
+        #[inline]
+        fn div_mod_precomputed(self, other: &Integer, data: &DivModData) -> (Integer, Integer) {
+            div_mod_precomputed_integers(self, other, data)
+        }
+    }
+}
+
+impl DivAssignModPrecomputed<Self> for Integer {
+    /// Divides an [`Integer`] by another [`Integer`] in place, returning the remainder. The
+    /// quotient is rounded towards negative infinity, and the remainder has the same sign as the
+    /// second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// Some precomputed data is provided; this speeds up computations involving several divisions
+    /// by the same divisor. The precomputed data should be obtained using
+    /// [`precompute_div_mod_data`](DivModPrecomputed::precompute_div_mod_data), applied to the same
+    /// divisor or to its negative.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// May panic if `data` was not computed from `other` or its negative.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::{DivAssignModPrecomputed, DivModPrecomputed};
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// let d = Integer::from(10);
+    /// let data = Integer::precompute_div_mod_data(&d);
+    /// // -3 * 10 + 7 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_mod_precomputed(d, &data), 7);
+    /// assert_eq!(x, -3);
+    /// ```
+    #[inline]
+    fn div_assign_mod_precomputed(&mut self, other: Self, data: &DivModData) -> Self {
+        let (q, r) = div_mod_precomputed_integers(self, &other, data);
+        *self = q;
+        r
+    }
+}
+
+impl DivAssignModPrecomputed<&Self> for Integer {
+    /// Divides an [`Integer`] by another [`Integer`] in place, returning the remainder. The
+    /// quotient is rounded towards negative infinity, and the remainder has the same sign as the
+    /// second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// Some precomputed data is provided; this speeds up computations involving several divisions
+    /// by the same divisor. The precomputed data should be obtained using
+    /// [`precompute_div_mod_data`](DivModPrecomputed::precompute_div_mod_data), applied to the same
+    /// divisor or to its negative.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// May panic if `data` was not computed from `other` or its negative.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::{DivAssignModPrecomputed, DivModPrecomputed};
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// let d = Integer::from(10);
+    /// let data = Integer::precompute_div_mod_data(&d);
+    /// // -3 * 10 + 7 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_mod_precomputed(&d, &data), 7);
+    /// assert_eq!(x, -3);
+    /// ```
+    #[inline]
+    fn div_assign_mod_precomputed(&mut self, other: &Self, data: &DivModData) -> Self {
+        let (q, r) = div_mod_precomputed_integers(self, other, data);
+        *self = q;
+        r
+    }
+}
+
+impl DivRem<Self> for Integer {
+    type DivOutput = Self;
+    type RemOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both by value and returning the
+    /// quotient and remainder. The quotient is rounded towards zero and the remainder has the same
+    /// sign as the first [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \operatorname{sgn}(xy) \left \lfloor \left | \frac{x}{y} \right |
+    /// \right \rfloor, \space
+    /// x - y \operatorname{sgn}(xy)
+    /// \left \lfloor \left | \frac{x}{y} \right | \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivRem;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_rem(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_rem(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_rem(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_rem(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    #[inline]
+    fn div_rem(mut self, other: Self) -> (Self, Self) {
+        let r = self.div_assign_rem(other);
+        (self, r)
+    }
+}
+
+impl DivRem<&Self> for Integer {
+    type DivOutput = Self;
+    type RemOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking the first by value and the second by
+    /// reference and returning the quotient and remainder. The quotient is rounded towards zero and
+    /// the remainder has the same sign as the first [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \operatorname{sgn}(xy) \left \lfloor \left | \frac{x}{y} \right |
+    /// \right \rfloor, \space
+    /// x - y \operatorname{sgn}(xy)
+    /// \left \lfloor \left | \frac{x}{y} \right | \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivRem;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_rem(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .div_rem(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_rem(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .div_rem(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    #[inline]
+    fn div_rem(mut self, other: &Self) -> (Self, Self) {
+        let r = self.div_assign_rem(other);
+        (self, r)
+    }
+}
+
+impl DivRem<Integer> for &Integer {
+    type DivOutput = Integer;
+    type RemOutput = Integer;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking the first by reference and the second
+    /// by value and returning the quotient and remainder. The quotient is rounded towards zero and
+    /// the remainder has the same sign as the first [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \operatorname{sgn}(xy) \left \lfloor \left | \frac{x}{y} \right |
+    /// \right \rfloor, \space
+    /// x - y \operatorname{sgn}(xy)
+    /// \left \lfloor \left | \frac{x}{y} \right | \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivRem;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_rem(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_rem(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_rem(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_rem(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    #[inline]
+    fn div_rem(self, other: Integer) -> (Integer, Integer) {
+        let (q, r) = (&self.abs).div_mod(other.abs);
+        (
+            Integer::from_sign_and_abs(self.sign == other.sign, q),
+            Integer::from_sign_and_abs(self.sign, r),
+        )
+    }
+}
+
+impl DivRem<&Integer> for &Integer {
+    type DivOutput = Integer;
+    type RemOutput = Integer;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both by reference and returning the
+    /// quotient and remainder. The quotient is rounded towards zero and the remainder has the same
+    /// sign as the first [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \operatorname{sgn}(xy) \left \lfloor \left | \frac{x}{y} \right |
+    /// \right \rfloor, \space
+    /// x - y \operatorname{sgn}(xy)
+    /// \left \lfloor \left | \frac{x}{y} \right | \right \rfloor \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivRem;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_rem(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(2, 3)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .div_rem(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_rem(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .div_rem(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(2, -3)"
+    /// );
+    /// ```
+    #[inline]
+    fn div_rem(self, other: &Integer) -> (Integer, Integer) {
+        let (q, r) = (&self.abs).div_mod(&other.abs);
+        (
+            Integer::from_sign_and_abs(self.sign == other.sign, q),
+            Integer::from_sign_and_abs(self.sign, r),
+        )
+    }
+}
+
+impl DivAssignRem<Self> for Integer {
+    type RemOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`] in place, taking the [`Integer`] on the
+    /// right-hand side by value and returning the remainder. The quotient is rounded towards zero
+    /// and the remainder has the same sign as the first [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = x - y \operatorname{sgn}(xy)
+    /// \left \lfloor \left | \frac{x}{y} \right | \right \rfloor,
+    /// $$
+    /// $$
+    /// x \gets \operatorname{sgn}(xy) \left \lfloor \left | \frac{x}{y} \right |
+    /// \right \rfloor.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivAssignRem;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_rem(Integer::from(10)), 3);
+    /// assert_eq!(x, 2);
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_rem(Integer::from(-10)), 3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_rem(Integer::from(10)), -3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_rem(Integer::from(-10)), -3);
+    /// assert_eq!(x, 2);
+    /// ```
+    #[inline]
+    fn div_assign_rem(&mut self, other: Self) -> Self {
+        let r = Self::from_sign_and_abs(self.sign, self.abs.div_assign_mod(other.abs));
+        self.sign = self.sign == other.sign || self.abs == 0u32;
+        r
+    }
+}
+
+impl DivAssignRem<&Self> for Integer {
+    type RemOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`] in place, taking the [`Integer`] on the
+    /// right-hand side by reference and returning the remainder. The quotient is rounded towards
+    /// zero and the remainder has the same sign as the first [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = x - y \operatorname{sgn}(xy)
+    /// \left \lfloor \left | \frac{x}{y} \right | \right \rfloor,
+    /// $$
+    /// $$
+    /// x \gets \operatorname{sgn}(xy) \left \lfloor \left | \frac{x}{y} \right |
+    /// \right \rfloor.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::DivAssignRem;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 2 * 10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_rem(&Integer::from(10)), 3);
+    /// assert_eq!(x, 2);
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.div_assign_rem(&Integer::from(-10)), 3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_rem(&Integer::from(10)), -3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // 2 * -10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.div_assign_rem(&Integer::from(-10)), -3);
+    /// assert_eq!(x, 2);
+    /// ```
+    #[inline]
+    fn div_assign_rem(&mut self, other: &Self) -> Self {
+        let r = Self::from_sign_and_abs(self.sign, self.abs.div_assign_mod(&other.abs));
+        self.sign = self.sign == other.sign || self.abs == 0u32;
+        r
+    }
+}
+
+impl CeilingDivMod<Self> for Integer {
+    type DivOutput = Self;
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both by value and returning the
+    /// quotient and remainder. The quotient is rounded towards positive infinity and the remainder
+    /// has the opposite sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lceil \frac{x}{y} \right \rceil, \space
+    /// x - y\left \lceil \frac{x}{y} \right \rceil \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::CeilingDivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 3 * 10 + -7 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .ceiling_div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(3, -7)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .ceiling_div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .ceiling_div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 3 * -10 + 7 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .ceiling_div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(3, 7)"
+    /// );
+    /// ```
+    #[inline]
+    fn ceiling_div_mod(mut self, other: Self) -> (Self, Self) {
+        let r = self.ceiling_div_assign_mod(other);
+        (self, r)
+    }
+}
+
+impl CeilingDivMod<&Self> for Integer {
+    type DivOutput = Self;
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both the first by value and the second
+    /// by reference and returning the quotient and remainder. The quotient is rounded towards
+    /// positive infinity and the remainder has the opposite sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lceil \frac{x}{y} \right \rceil, \space
+    /// x - y\left \lceil \frac{x}{y} \right \rceil \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::CeilingDivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 3 * 10 + -7 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .ceiling_div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(3, -7)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     Integer::from(23)
+    ///         .ceiling_div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .ceiling_div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 3 * -10 + 7 = -23
+    /// assert_eq!(
+    ///     Integer::from(-23)
+    ///         .ceiling_div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(3, 7)"
+    /// );
+    /// ```
+    #[inline]
+    fn ceiling_div_mod(mut self, other: &Self) -> (Self, Self) {
+        let r = self.ceiling_div_assign_mod(other);
+        (self, r)
+    }
+}
+
+impl CeilingDivMod<Integer> for &Integer {
+    type DivOutput = Integer;
+    type ModOutput = Integer;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking the first by reference and the second
+    /// by value and returning the quotient and remainder. The quotient is rounded towards positive
+    /// infinity and the remainder has the opposite sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lceil \frac{x}{y} \right \rceil, \space
+    /// x - y\left \lceil \frac{x}{y} \right \rceil \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::CeilingDivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 3 * 10 + -7 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .ceiling_div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(3, -7)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .ceiling_div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .ceiling_div_mod(Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 3 * -10 + 7 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .ceiling_div_mod(Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(3, 7)"
+    /// );
+    /// ```
+    fn ceiling_div_mod(self, other: Integer) -> (Integer, Integer) {
+        let q_sign = self.sign == other.sign;
+        let (q, r) = if q_sign {
+            (&self.abs).ceiling_div_neg_mod(other.abs)
+        } else {
+            (&self.abs).div_mod(other.abs)
+        };
+        (
+            Integer::from_sign_and_abs(q_sign, q),
+            Integer::from_sign_and_abs(!other.sign, r),
+        )
+    }
+}
+
+impl CeilingDivMod<&Integer> for &Integer {
+    type DivOutput = Integer;
+    type ModOutput = Integer;
+
+    /// Divides an [`Integer`] by another [`Integer`], taking both by reference and returning the
+    /// quotient and remainder. The quotient is rounded towards positive infinity and the remainder
+    /// has the opposite sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = \left ( \left \lceil \frac{x}{y} \right \rceil, \space
+    /// x - y\left \lceil \frac{x}{y} \right \rceil \right ).
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::CeilingDivMod;
+    /// use mithqalite_base::strings::ToDebugString;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 3 * 10 + -7 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .ceiling_div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(3, -7)"
+    /// );
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// assert_eq!(
+    ///     (&Integer::from(23))
+    ///         .ceiling_div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(-2, 3)"
+    /// );
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .ceiling_div_mod(&Integer::from(10))
+    ///         .to_debug_string(),
+    ///     "(-2, -3)"
+    /// );
+    ///
+    /// // 3 * -10 + 7 = -23
+    /// assert_eq!(
+    ///     (&Integer::from(-23))
+    ///         .ceiling_div_mod(&Integer::from(-10))
+    ///         .to_debug_string(),
+    ///     "(3, 7)"
+    /// );
+    /// ```
+    fn ceiling_div_mod(self, other: &Integer) -> (Integer, Integer) {
+        let q_sign = self.sign == other.sign;
+        let (q, r) = if q_sign {
+            (&self.abs).ceiling_div_neg_mod(&other.abs)
+        } else {
+            (&self.abs).div_mod(&other.abs)
+        };
+        (
+            Integer::from_sign_and_abs(q_sign, q),
+            Integer::from_sign_and_abs(!other.sign, r),
+        )
+    }
+}
+
+impl CeilingDivAssignMod<Self> for Integer {
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`] in place, taking the [`Integer`] on the
+    /// right-hand side by value and returning the remainder. The quotient is rounded towards
+    /// positive infinity and the remainder has the opposite sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = x - y\left \lceil\frac{x}{y} \right \rceil,
+    /// $$
+    /// $$
+    /// x \gets \left \lceil \frac{x}{y} \right \rceil.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::CeilingDivAssignMod;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 3 * 10 + -7 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.ceiling_div_assign_mod(Integer::from(10)), -7);
+    /// assert_eq!(x, 3);
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.ceiling_div_assign_mod(Integer::from(-10)), 3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.ceiling_div_assign_mod(Integer::from(10)), -3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // 3 * -10 + 7 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.ceiling_div_assign_mod(Integer::from(-10)), 7);
+    /// assert_eq!(x, 3);
+    /// ```
+    fn ceiling_div_assign_mod(&mut self, other: Self) -> Self {
+        let r = if self.sign == other.sign {
+            self.sign = true;
+            self.abs.ceiling_div_assign_neg_mod(other.abs)
+        } else {
+            let r = self.abs.div_assign_mod(other.abs);
+            self.sign = self.abs == 0u32;
+            r
+        };
+        Self::from_sign_and_abs(!other.sign, r)
+    }
+}
+
+impl CeilingDivAssignMod<&Self> for Integer {
+    type ModOutput = Self;
+
+    /// Divides an [`Integer`] by another [`Integer`] in place, taking the [`Integer`] on the
+    /// right-hand side by reference and returning the remainder. The quotient is rounded towards
+    /// positive infinity and the remainder has the opposite sign as the second [`Integer`].
+    ///
+    /// The quotient and remainder satisfy $x = qy + r$ and $0 \leq |r| < |y|$.
+    ///
+    /// $$
+    /// f(x, y) = x - y\left \lceil\frac{x}{y} \right \rceil,
+    /// $$
+    /// $$
+    /// x \gets \left \lceil \frac{x}{y} \right \rceil.
+    /// $$
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log \log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `other` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::arithmetic::traits::CeilingDivAssignMod;
+    /// use mithqalite_nz::integer::Integer;
+    ///
+    /// // 3 * 10 + -7 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.ceiling_div_assign_mod(&Integer::from(10)), -7);
+    /// assert_eq!(x, 3);
+    ///
+    /// // -2 * -10 + 3 = 23
+    /// let mut x = Integer::from(23);
+    /// assert_eq!(x.ceiling_div_assign_mod(&Integer::from(-10)), 3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // -2 * 10 + -3 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.ceiling_div_assign_mod(&Integer::from(10)), -3);
+    /// assert_eq!(x, -2);
+    ///
+    /// // 3 * -10 + 7 = -23
+    /// let mut x = Integer::from(-23);
+    /// assert_eq!(x.ceiling_div_assign_mod(&Integer::from(-10)), 7);
+    /// assert_eq!(x, 3);
+    /// ```
+    fn ceiling_div_assign_mod(&mut self, other: &Self) -> Self {
+        let r = if self.sign == other.sign {
+            self.sign = true;
+            self.abs.ceiling_div_assign_neg_mod(&other.abs)
+        } else {
+            let r = self.abs.div_assign_mod(&other.abs);
+            self.sign = self.abs == 0u32;
+            r
+        };
+        Self::from_sign_and_abs(!other.sign, r)
+    }
+}

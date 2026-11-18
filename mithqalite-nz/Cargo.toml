@@ -1,0 +1,70 @@
+[package]
+name = "mithqalite-nz"
+version = "0.14.0"
+authors = ["Mikhail Hogrefe <mikhailhogrefe@gmail.com>"]
+rust-version.workspace = true
+edition.workspace = true
+description = "The bignum types Natural and Integer, with efficient algorithms partially derived from GMP and FLINT."
+readme = "README.md"
+homepage = "https://github.com/faris0x/Mithqalite"
+repository = "https://github.com/faris0x/Mithqalite"
+license = "LGPL-3.0-only"
+keywords = ["mathematics", "math", "numerics", "bignum"]
+categories = ["mathematics"]
+
+[lib]
+name = "mithqalite_nz"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mithqalite_nz_main"
+path = "src/bin.rs"
+
+[dependencies]
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+libm = { version = "0.2.16", default-features = false }
+mithqalite-base = { version = "0.14.0", default-features = false, path = "../mithqalite-base" }
+serde = { version = "1.0.228", optional = true, default-features = false, features = ["alloc", "derive"] }
+wide = { version = "1.7.1", default-features = false }
+
+indoc = { version = "2.0.7", optional = true}
+pyo3 = { version = "0.29.0", optional = true }
+serde_json = { version = "1.0.149", optional = true }
+num = { version = "0.4.3", optional = true, features = ["serde"] }
+rug = { version = "1.30.0", default-features = false, optional = true, features = ["integer", "serde"] }
+
+embed-doc-image = { version = "0.1.4", optional = true }
+
+# For the AVX2 instantiation of the FFT multiplication (see natural/arithmetic/mul/fft/avx2.rs). `wide`
+# already depends on it, so this adds no crate to the build.
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+bytemuck = { version = "1.16", default-features = false }
+
+[dev-dependencies]
+mithqalite-nz = { path = ".", features = ["test_build"] }
+
+[build-dependencies]
+pyo3-build-config = { version = "0.29.0", features = ["resolve-config"], optional = true }
+
+[features]
+default = ["std"]
+std = ["mithqalite-base/std", "wide/std"]
+32_bit_limbs = []
+random = ["mithqalite-base/random"]
+enable_pyo3 = ["pyo3", "pyo3-build-config"]
+enable_serde = ["serde"]
+test_build = ["mithqalite-base/test_build", "random", "serde", "serde_json", "num", "rug", "pyo3", "pyo3-build-config", "indoc"]
+bin_build = ["test_build"]
+float_helpers = []
+doc-images = ["embed-doc-image"]
+
+[package.metadata.docs.rs]
+# docs.rs uses a nightly compiler, so by instructing it to use our `doc-images` feature we
+# ensure that it will render any images that we may have in inner attribute documentation.
+features = ["doc-images", "random"]
+rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+
+# Accept the `dylint_lib` cfg that `cargo dylint` sets, used by
+# `#[cfg_attr(dylint_lib = "mithqalite_lints", expect(...))]` exemptions (see mithqalite-lints).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(dylint_lib, values(any()))"] }

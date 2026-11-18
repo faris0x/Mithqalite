@@ -1,0 +1,128 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the GNU MPFR Library.
+//
+//      Copyright 1999, 2001-2024 Free Software Foundation, Inc.
+//
+//      Contributed by the AriC and Caramba projects, INRIA.
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::Float;
+use core::cmp::Ordering;
+use mithqalite_base::num::arithmetic::traits::Sqrt;
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_nz::natural::arithmetic::float::round::float_can_round;
+use mithqalite_nz::platform::Limb;
+
+impl Float {
+    /// Returns an approximation of $\sqrt{\pi}$, with the given precision and rounded using the
+    /// given [`RoundingMode`]. An [`Ordering`] is also returned, indicating whether the rounded
+    /// value is less than or greater than the exact value of the constant. (Since the constant is
+    /// irrational, the rounded value is never equal to the exact value.)
+    ///
+    /// $$
+    /// x = \sqrt{\pi}+\varepsilon.
+    /// $$
+    /// - If $m$ is not `Nearest`, then $|\varepsilon| < 2^{-p+1}$.
+    /// - If $m$ is `Nearest`, then $|\varepsilon| < 2^{-p}$.
+    ///
+    /// The constant is irrational and transcendental.
+    ///
+    /// The output has precision `prec`.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `prec`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero or if `rm` is `Exact`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (sqrt_pi, o) = Float::sqrt_pi_prec_round(100, Floor);
+    /// assert_eq!(sqrt_pi.to_string(), "1.7724538509055160272981674833397");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (sqrt_pi, o) = Float::sqrt_pi_prec_round(100, Ceiling);
+    /// assert_eq!(sqrt_pi.to_string(), "1.7724538509055160272981674833413");
+    /// assert_eq!(o, Greater);
+    /// ```
+    pub fn sqrt_pi_prec_round(prec: u64, rm: RoundingMode) -> (Self, Ordering) {
+        let mut working_prec = prec + 10;
+        let mut increment = Limb::WIDTH;
+        loop {
+            let sqrt_pi = Self::pi_prec_round(working_prec, Floor).0.sqrt();
+            // See algorithms.tex. Since we rounded down when computing pi, the absolute error of
+            // the square root is bounded by (c_sqrt + k_fx)ulp(sqrt) <= 2ulp(sqrt).
+            if float_can_round(
+                sqrt_pi.significand_ref().unwrap(),
+                working_prec - 1,
+                prec,
+                rm,
+            ) {
+                return Self::from_float_prec_round(sqrt_pi, prec, rm);
+            }
+            working_prec += increment;
+            increment = working_prec >> 1;
+        }
+    }
+
+    /// Returns an approximation of $\sqrt{\pi}$, with the given precision and rounded to the
+    /// nearest [`Float`] of that precision. An [`Ordering`] is also returned, indicating whether
+    /// the rounded value is less than or greater than the exact value of the constant. (Since the
+    /// constant is irrational, the rounded value is never equal to the exact value.)
+    ///
+    /// $$
+    /// x = \sqrt{\pi}+\varepsilon.
+    /// $$
+    /// - $|\varepsilon| < 2^{-p}$.
+    ///
+    /// The constant is irrational and transcendental.
+    ///
+    /// The output has precision `prec`.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `prec`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (sqrt_pi, o) = Float::sqrt_pi_prec(1);
+    /// assert_eq!(sqrt_pi.to_string(), "2.0");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (sqrt_pi, o) = Float::sqrt_pi_prec(10);
+    /// assert_eq!(sqrt_pi.to_string(), "1.7715");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (sqrt_pi, o) = Float::sqrt_pi_prec(100);
+    /// assert_eq!(sqrt_pi.to_string(), "1.7724538509055160272981674833413");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn sqrt_pi_prec(prec: u64) -> (Self, Ordering) {
+        Self::sqrt_pi_prec_round(prec, Nearest)
+    }
+}

@@ -1,0 +1,777 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+#![feature(rustc_private)]
+#![warn(unused_extern_crates)]
+
+extern crate rustc_ast;
+extern crate rustc_errors;
+extern crate rustc_hir;
+extern crate rustc_lint;
+extern crate rustc_middle;
+extern crate rustc_session;
+extern crate rustc_span;
+
+mod adjacent_vec_allocations;
+mod assert_ordering_equal_prefer_exact;
+mod assign_then_consumed_once;
+mod assign_then_returned;
+mod bignum_literal_suffix;
+mod clone_with_ref_variant;
+mod collapse_adjacent_ifs;
+mod collapse_adjacent_imports;
+mod compare_with_power_of_2;
+mod compare_with_primitive;
+mod div_mod_projection;
+mod duplicate_const;
+mod factor_out_assignment;
+mod fully_qualified_path;
+mod hoist_shifts;
+mod let_tuple_underscore_to_field;
+mod long_lines;
+mod manual_float_from_primitive;
+mod manual_fractional_part;
+mod manual_from_sign_and_abs;
+mod manual_half_functions;
+mod manual_lexicographic_cmp;
+mod manual_rational_significant_bits;
+mod missing_inline_on_delegator;
+mod mul_div_by_power_of_2;
+mod mul_div_by_power_of_2_literal;
+mod redundant_cmp_reverse;
+mod redundant_crate_prefix;
+mod redundant_from_in_comparison;
+mod redundant_from_in_literal_comparison;
+mod redundant_nearest;
+mod redundant_prec_round_of_exact_constant;
+mod redundant_shift_conversion;
+mod redundant_tuple_rebuild;
+mod runtime_literal_conversion;
+mod shift_of_one;
+mod use_abs_comparison;
+mod use_assign_variant;
+mod use_bits;
+mod use_checked_log_base_2;
+mod use_cmp_double;
+mod use_cmp_product;
+mod use_const_binding;
+mod use_const_block;
+mod use_const_cast;
+mod use_coprime_with;
+mod use_determinant_sign;
+mod use_div_mod;
+mod use_div_mod_precomputed;
+mod use_divisible_by;
+mod use_exact_from;
+mod use_fused_mul;
+mod use_fused_mul_shl;
+mod use_get_bit;
+mod use_mod_power_of_2;
+mod use_mod_square;
+mod use_mul_shr_round;
+mod use_named_constant;
+mod use_parity;
+mod use_reciprocal;
+mod use_round_variant;
+mod use_saturating_from;
+mod use_sign;
+mod use_slice_test_zero;
+mod use_split_in_half;
+mod use_split_into_chunks;
+mod use_square;
+mod use_to_string_variant;
+mod use_trailing_zeros;
+mod use_unary_assign;
+mod use_width_mask;
+
+dylint_linting::dylint_library!();
+
+const BIGNUM_TYPES: [(&[&str], &str); 7] = [
+    (&["mithqalite_nz", "natural", "Natural"], "Natural"),
+    (&["mithqalite_nz", "integer", "Integer"], "Integer"),
+    (&["mithqalite_q", "rational", "Rational"], "Rational"),
+    (&["mithqalite_float", "float", "Float"], "Float"),
+    (
+        &["mithqalite_float", "big_exponent_float", "BigExponentFloat"],
+        "BigExponentFloat",
+    ),
+    (
+        &["mithqalite_nz", "gaussian_integer", "GaussianInteger"],
+        "GaussianInteger",
+    ),
+    (
+        &["mithqalite_q", "gaussian_rational", "GaussianRational"],
+        "GaussianRational",
+    ),
+];
+
+// If `e` (possibly behind `&`) is a call to `T::power_of_2` where `T` is a Malachite bignum type,
+// returns `T`'s unqualified name.
+fn power_of_2_call<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    e: &'tcx rustc_hir::Expr<'tcx>,
+) -> Option<&'static str> {
+    use rustc_hir::ExprKind;
+    use rustc_hir::def::{DefKind, Res};
+    let e = e.peel_borrows();
+    let ExprKind::Call(callee, [_]) = e.kind else {
+        return None;
+    };
+    let ExprKind::Path(qpath) = &callee.kind else {
+        return None;
+    };
+    let Res::Def(DefKind::AssocFn, fn_did) = cx.qpath_res(qpath, callee.hir_id) else {
+        return None;
+    };
+    if cx.tcx.item_name(fn_did).as_str() != "power_of_2" {
+        return None;
+    }
+    bignum_name(cx, cx.typeck_results().expr_ty(e))
+}
+
+// If `ty` is one of the Malachite bignum types, returns its unqualified name. The def path is
+// compared via `get_def_path`, which includes the crate name even for local types -- `def_path_str`
+// would not, leaving the lints blind inside the very crates that define the types.
+fn bignum_name<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+) -> Option<&'static str> {
+    let rustc_middle::ty::Adt(adt, _) = ty.kind() else {
+        return None;
+    };
+    let path = cx.get_def_path(adt.did());
+    BIGNUM_TYPES
+        .iter()
+        .find(|(p, _)| {
+            path.len() == p.len() && path.iter().zip(p.iter()).all(|(a, b)| a.as_str() == *b)
+        })
+        .map(|&(_, name)| name)
+}
+
+// Whether `e` is inside a function whose name contains `word`. A function named for an operation may
+// define it through another one -- a reference implementation of squaring that multiplies, or of
+// the reciprocal that divides -- and must not be told to call the operation it is defining or
+// checking.
+fn in_fn_named_for(cx: &rustc_lint::LateContext<'_>, e: &rustc_hir::Expr<'_>, word: &str) -> bool {
+    let owner = cx.tcx.hir_enclosing_body_owner(e.hir_id);
+    cx.tcx
+        .opt_item_name(owner.to_def_id())
+        .is_some_and(|n| n.as_str().contains(word))
+}
+
+// Strips any trailing `_val`/`_ref` variant suffixes, so that all by-value/by-reference variants of
+// a function family normalize to the same name.
+fn strip_variant_suffixes(mut name: &str) -> &str {
+    loop {
+        if let Some(stripped) = name
+            .strip_suffix("_val")
+            .or_else(|| name.strip_suffix("_ref"))
+        {
+            name = stripped;
+        } else {
+            return name;
+        }
+    }
+}
+
+// Whether the type `self_ty_did` has an inherent associated function named `name`.
+fn has_inherent_fn(
+    cx: &rustc_lint::LateContext<'_>,
+    self_ty_did: rustc_hir::def_id::DefId,
+    name: &str,
+) -> bool {
+    use rustc_hir::def::DefKind;
+    let sym = rustc_span::Symbol::intern(name);
+    cx.tcx.inherent_impls(self_ty_did).iter().any(|impl_did| {
+        cx.tcx
+            .associated_items(*impl_did)
+            .filter_by_name_unhygienic(sym)
+            .any(|item| matches!(cx.tcx.def_kind(item.def_id), DefKind::AssocFn))
+    })
+}
+
+// The `DefId` of the ADT of `ty`, if `ty` (after peeling references) is one of the bignum types.
+fn bignum_adt_did<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+) -> Option<rustc_hir::def_id::DefId> {
+    let ty = ty.peel_refs();
+    let rustc_middle::ty::Adt(adt, _) = ty.kind() else {
+        return None;
+    };
+    bignum_name(cx, ty).map(|_| adt.did())
+}
+
+// Peels `&` and `.clone()` layers off an expression, for comparing against the underlying place.
+// The name of the last segment of a `QPath`, if any.
+fn qpath_last_segment_name<'a>(qpath: &'a rustc_hir::QPath<'a>) -> Option<&'a str> {
+    match qpath {
+        rustc_hir::QPath::Resolved(_, path) => path.segments.last().map(|s| s.ident.name.as_str()),
+        rustc_hir::QPath::TypeRelative(_, seg) => Some(seg.ident.name.as_str()),
+    }
+}
+
+fn peel_clone_and_borrows<'tcx>(e: &'tcx rustc_hir::Expr<'tcx>) -> &'tcx rustc_hir::Expr<'tcx> {
+    use rustc_hir::ExprKind;
+    let mut e = e;
+    loop {
+        match e.kind {
+            ExprKind::AddrOf(_, _, inner) => e = inner,
+            ExprKind::MethodCall(seg, recv, [], _) if seg.ident.name.as_str() == "clone" => {
+                e = recv;
+            }
+            _ => return e,
+        }
+    }
+}
+
+// Converts a snake_case function-family name to the CamelCase trait-name stem, e.g. `exp_x_minus_1`
+// to `ExpXMinus1`.
+fn camel_case(name: &str) -> String {
+    name.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            chars.next().map_or_else(String::new, |c| {
+                c.to_uppercase().collect::<String>() + chars.as_str()
+            })
+        })
+        .collect()
+}
+
+// Whether an `*Assign` companion of the function family `base` exists: either an inherent
+// `{base}_assign`/`{base}_assign_ref` on the type, or a `{CamelCase(base)}Assign` trait in
+// `mithqalite_base`. Returns a name to suggest.
+fn assign_variant(
+    cx: &rustc_lint::LateContext<'_>,
+    self_ty_did: rustc_hir::def_id::DefId,
+    base: &str,
+) -> Option<String> {
+    let inherent = format!("{base}_assign");
+    if has_inherent_fn(cx, self_ty_did, &inherent) {
+        return Some(inherent);
+    }
+    let inherent_ref = format!("{base}_assign_ref");
+    if has_inherent_fn(cx, self_ty_did, &inherent_ref) {
+        return Some(inherent_ref);
+    }
+    let trait_name = format!("{}Assign", camel_case(base));
+    for module in [
+        "arithmetic",
+        "modular",
+        "number_theory",
+        "exponential",
+        "trigonometric",
+        "hyperbolic",
+        "linear_algebra",
+        "logic",
+    ] {
+        let path = format!("mithqalite_base::num::{module}::traits::{trait_name}");
+        if !clippy_utils::paths::lookup_path_str(cx.tcx, clippy_utils::paths::PathNS::Type, &path)
+            .is_empty()
+        {
+            return Some(format!("{base}_assign"));
+        }
+    }
+    None
+}
+
+// The `*Assign` companion of the function family `base` for a type that is not a Malachite bignum:
+// a `{CamelCase(base)}Assign` trait in `mithqalite_base` that `ty` actually implements. Unlike
+// `assign_variant`, which knows its receiver is a bignum and so can settle for the trait existing,
+// this must check the impl: `PowAssign` exists, but that says nothing about some unrelated type
+// with a `pow` method.
+fn assign_trait_impl<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+    base: &str,
+) -> Option<String> {
+    let trait_name = format!("{}Assign", camel_case(base));
+    for module in [
+        "arithmetic",
+        "modular",
+        "number_theory",
+        "exponential",
+        "trigonometric",
+        "hyperbolic",
+        "linear_algebra",
+        "logic",
+    ] {
+        let path = format!("mithqalite_base::num::{module}::traits::{trait_name}");
+        if implements_trait_by_path(cx, ty, &path) {
+            return Some(format!("{base}_assign"));
+        }
+    }
+    None
+}
+
+// Whether `ty` implements the trait named by the full path `path` with `Self` as its right-hand
+// side. Unlike `implements_trait_by_path`, which leaves the right-hand side to inference, this
+// works for the four-variant families: `DivMod<T>` and `DivMod<&T>` both exist on the bignum types,
+// so inference has no unambiguous choice and silently reports no implementation at all.
+fn implements_trait_with_self_rhs<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+    path: &str,
+) -> bool {
+    use clippy_utils::paths::{PathNS, lookup_path_str};
+    use clippy_utils::ty::implements_trait;
+    lookup_path_str(cx.tcx, PathNS::Type, path)
+        .into_iter()
+        .filter(|did| cx.tcx.def_kind(*did) == rustc_hir::def::DefKind::Trait)
+        .any(|did| implements_trait(cx, ty, did, &[ty.into()]))
+}
+
+// Whether `ty` implements the trait named by the full path `path`. The traits this is used with are
+// generic in their right-hand side (`SaturatingMulAssign<RHS = Self>`, `OrdDouble<Rhs = Self>`);
+// any right-hand side counts, so every parameter past `Self` is left to inference.
+fn implements_trait_by_path<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+    path: &str,
+) -> bool {
+    use clippy_utils::paths::{PathNS, lookup_path_str};
+    use clippy_utils::ty::implements_trait_with_env_from_iter;
+    lookup_path_str(cx.tcx, PathNS::Type, path)
+        .into_iter()
+        .filter(|did| cx.tcx.def_kind(*did) == rustc_hir::def::DefKind::Trait)
+        .any(|did| {
+            let rhs_count = cx.tcx.generics_of(did).own_params.len() - 1;
+            implements_trait_with_env_from_iter(
+                cx.tcx,
+                cx.typing_env(),
+                ty,
+                did,
+                None,
+                std::iter::repeat_n(None::<rustc_middle::ty::GenericArg<'tcx>>, rhs_count),
+            )
+        })
+}
+
+// The in-place `*_assign*` companion to suggest for a call to the `base` family on a receiver of
+// type `ty`, if one exists. Bignums get the inherent-or-trait lookup; everything else (primitive
+// integers and floats, and any other type implementing a `mithqalite_base` assign trait) must
+// implement the trait.
+fn assign_variant_for_ty<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+    base: &str,
+) -> Option<String> {
+    match bignum_adt_did(cx, ty) {
+        Some(adt_did) => assign_variant(cx, adt_did, base),
+        None => assign_trait_impl(cx, ty, base),
+    }
+}
+
+// Whether `ty` is `core::cmp::Ordering`. Whether `e` (after peeling `&`) is an associated constant
+// named `ZERO`.
+fn is_zero_assoc_const<'tcx>(
+    cx: &rustc_lint::LateContext<'tcx>,
+    e: &'tcx rustc_hir::Expr<'tcx>,
+) -> bool {
+    use rustc_hir::ExprKind;
+    use rustc_hir::def::{DefKind, Res};
+    let mut e = e;
+    while let ExprKind::AddrOf(_, _, inner) = e.kind {
+        e = inner;
+    }
+    let ExprKind::Path(ref qpath) = e.kind else {
+        return false;
+    };
+    let Res::Def(DefKind::AssocConst { .. }, did) = cx.qpath_res(qpath, e.hir_id) else {
+        return false;
+    };
+    cx.tcx.item_name(did).as_str() == "ZERO"
+}
+
+fn is_ordering_ty(cx: &rustc_lint::LateContext<'_>, ty: rustc_middle::ty::Ty<'_>) -> bool {
+    if let rustc_middle::ty::Adt(adt, _) = ty.kind() {
+        let path = cx.get_def_path(adt.did());
+        path.len() == 3
+            && path[0].as_str() == "core"
+            && path[1].as_str() == "cmp"
+            && path[2].as_str() == "Ordering"
+    } else {
+        false
+    }
+}
+
+// Whether `e` is a path to an associated constant named `WIDTH`.
+fn is_width_const(cx: &rustc_lint::LateContext<'_>, e: &rustc_hir::Expr<'_>) -> bool {
+    use rustc_hir::ExprKind;
+    use rustc_hir::def::{DefKind, Res};
+    let ExprKind::Path(qpath) = &e.kind else {
+        return false;
+    };
+    matches!(cx.qpath_res(qpath, e.hir_id), Res::Def(DefKind::AssocConst { .. }, did)
+        if cx.tcx.item_name(did).as_str() == "WIDTH")
+}
+
+// The value of an integer literal, negated literal included.
+fn literal_value(e: &rustc_hir::Expr<'_>) -> Option<i128> {
+    use rustc_ast::LitKind;
+    use rustc_hir::{ExprKind, UnOp};
+    match &e.kind {
+        ExprKind::Lit(lit) => match lit.node {
+            LitKind::Int(v, _) => i128::try_from(v.get()).ok(),
+            _ => None,
+        },
+        ExprKind::Unary(UnOp::Neg, inner) => literal_value(inner).map(i128::checked_neg)?,
+        _ => None,
+    }
+}
+
+// Whether `e` is the integer literal `value` or a path to a constant named `name` (e.g. the value
+// 2, spelled `2` or `T::TWO`).
+fn is_int_const(
+    cx: &rustc_lint::LateContext<'_>,
+    e: &rustc_hir::Expr<'_>,
+    value: i128,
+    name: &str,
+) -> bool {
+    use rustc_hir::ExprKind;
+    use rustc_hir::def::DefKind;
+    let e = peel_clone_and_borrows(e);
+    if literal_value(e) == Some(value) {
+        return true;
+    }
+    let ExprKind::Path(qpath) = &e.kind else {
+        return false;
+    };
+    let Some(did) = cx.qpath_res(qpath, e.hir_id).opt_def_id() else {
+        return false;
+    };
+    matches!(
+        cx.tcx.def_kind(did),
+        DefKind::Const { .. } | DefKind::AssocConst { .. }
+    ) && cx.tcx.item_name(did).as_str() == name
+}
+
+// Whether the expression is inside a const context: the body of a `const` item, a `const` block, a
+// `static` initializer, or a `const fn` (whose body is evaluated at compile time whenever its
+// caller is).
+fn in_const_context(cx: &rustc_lint::LateContext<'_>, e: &rustc_hir::Expr<'_>) -> bool {
+    use rustc_hir::{BodyOwnerKind, Constness};
+    let owner = cx.tcx.hir_enclosing_body_owner(e.hir_id);
+    match cx.tcx.hir_body_owner_kind(owner) {
+        BodyOwnerKind::Const { .. } | BodyOwnerKind::Static(_) => true,
+        BodyOwnerKind::Fn => cx.tcx.constness(owner) == Constness::Const,
+        _ => false,
+    }
+}
+
+// Whether `e` mentions a named constant -- a `const` item or an associated const -- so that a const
+// expression built from it is *derived*, rather than a bare literal computation. Only the
+// const-expression shapes (paths, unary/cast, binary) are walked.
+fn references_named_const(cx: &rustc_lint::LateContext<'_>, e: &rustc_hir::Expr<'_>) -> bool {
+    use rustc_hir::ExprKind;
+    use rustc_hir::def::{DefKind, Res};
+    match e.kind {
+        ExprKind::Path(ref qpath) => matches!(
+            cx.qpath_res(qpath, e.hir_id),
+            Res::Def(DefKind::Const { .. } | DefKind::AssocConst { .. }, _)
+        ),
+        ExprKind::Unary(_, inner) | ExprKind::Cast(inner, _) => references_named_const(cx, inner),
+        ExprKind::Binary(_, l, r) => references_named_const(cx, l) || references_named_const(cx, r),
+        _ => false,
+    }
+}
+
+// Whether the span lives in demo-and-bench or test code, where algorithm-comparison arms and
+// cross-function consistency properties legitimately spell out forms the lints would otherwise
+// flag. Unlike in_test_code, this does NOT exempt test_util: reference implementations there are
+// library code and should read like it.
+fn in_bin_util_or_tests(cx: &rustc_lint::LateContext<'_>, hir_id: rustc_hir::HirId) -> bool {
+    use rustc_lint::LintContext;
+    let span = cx.tcx.hir_span(hir_id);
+    if let rustc_span::FileName::Real(real) = cx.sess().source_map().span_to_filename(span)
+        && let Some(path) = real.local_path()
+    {
+        let path = path.to_string_lossy().replace('\\', "/");
+        path.contains("/bin_util/") || path.contains("/tests/")
+    } else {
+        false
+    }
+}
+
+// Whether the span lies in test-oriented code: tests, demos and benches (`bin_util`), test
+// utilities, or any code compiled only as part of a test harness (which covers `#[cfg(test)]`
+// modules inside `src`). Lints do not call this directly; they call one of the helpers below, whose
+// names say why the lint stands down there.
+fn in_test_code(cx: &rustc_lint::LateContext<'_>, span: rustc_span::Span) -> bool {
+    use rustc_lint::LintContext;
+    // The extracted-doctests crate compiles doc examples as test targets, but they are
+    // documentation, not tests, and should be linted in full; rundoc.sh sets this variable when
+    // sweeping them. The exceptions are the conversion docs and the docs of the dedicated constant
+    // constructors, whose examples demonstrate the very constructions the lints would rewrite; the
+    // extracted file names encode their origins.
+    static LINT_DOCTESTS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *LINT_DOCTESTS.get_or_init(|| std::env::var_os("MALACHITE_LINT_DOCTESTS").is_some()) {
+        if let rustc_span::FileName::Real(real) = cx.sess().source_map().span_to_filename(span)
+            && let Some(path) = real.local_path()
+        {
+            let path = path.to_string_lossy().replace('\\', "/");
+            return path.contains("_conversion_")
+                || path.contains("_basic_constants_")
+                || path.contains("_comparison_");
+        }
+        return false;
+    }
+    if cx.sess().opts.test {
+        return true;
+    }
+    if let rustc_span::FileName::Real(real) = cx.sess().source_map().span_to_filename(span)
+        && let Some(path) = real.local_path()
+    {
+        let path = path.to_string_lossy().replace('\\', "/");
+        path.contains("/tests/") || path.contains("/bin_util/") || path.contains("/test_util/")
+    } else {
+        false
+    }
+}
+
+// Whether the span lies in test-oriented code that spells out a discouraged form on purpose:
+// property tests cross-check a dedicated function against its spelled-out equivalent (`square`
+// against `&x * &x`, shifts against multiplication by a power of 2), and tests and demos call the
+// by-value, in-place, and rounding variants they are testing. Rewriting any of these would remove
+// what the code exists to check. Test utilities are not exempt: their reference implementations
+// and helpers are shared by tests and benchmarks, and are written like library code; a reference
+// stays independent of the code it checks by using a different algorithm, not a discouraged
+// spelling.
+fn in_cross_check_code(cx: &rustc_lint::LateContext<'_>, span: rustc_span::Span) -> bool {
+    use rustc_lint::LintContext;
+    if let rustc_span::FileName::Real(real) = cx.sess().source_map().span_to_filename(span)
+        && let Some(path) = real.local_path()
+        && path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains("/test_util/")
+    {
+        return false;
+    }
+    in_test_code(cx, span)
+}
+
+// Whether the span lies in test-oriented code, where a lint that guards only performance
+// (evaluating at compile time, inlining, avoiding an allocation) has nothing to protect.
+fn in_performance_insensitive_code(
+    cx: &rustc_lint::LateContext<'_>,
+    span: rustc_span::Span,
+) -> bool {
+    in_test_code(cx, span)
+}
+
+// Whether the span lies in test code that exercises constructors or conversions on purpose: tests,
+// demos, and test utilities under a `conversion`, `basic/constants`, or `comparison` directory, or
+// the doctests of those modules. Elsewhere in test code, a value like `Natural::from(2u32)` is just
+// a value, and should be written the way library code writes it.
+fn in_constructor_test_code(cx: &rustc_lint::LateContext<'_>, span: rustc_span::Span) -> bool {
+    use rustc_lint::LintContext;
+    if !in_test_code(cx, span) {
+        return false;
+    }
+    // In doctest mode, in_test_code is already true only for the constructor-demonstrating docs.
+    if std::env::var_os("MALACHITE_LINT_DOCTESTS").is_some() {
+        return true;
+    }
+    if let rustc_span::FileName::Real(real) = cx.sess().source_map().span_to_filename(span)
+        && let Some(path) = real.local_path()
+    {
+        let path = path.to_string_lossy().replace('\\', "/");
+        path.contains("/conversion/")
+            || path.contains("/basic/constants")
+            || path.contains("/comparison/")
+    } else {
+        false
+    }
+}
+
+#[expect(clippy::no_mangle_with_rust_abi)]
+#[unsafe(no_mangle)]
+pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint::LintStore) {
+    dylint_linting::init_config(sess);
+    lint_store.register_lints(&[
+        adjacent_vec_allocations::ADJACENT_VEC_ALLOCATIONS,
+        assert_ordering_equal_prefer_exact::ASSERT_ORDERING_EQUAL_PREFER_EXACT,
+        assign_then_consumed_once::ASSIGN_THEN_CONSUMED_ONCE,
+        assign_then_returned::ASSIGN_THEN_RETURNED,
+        bignum_literal_suffix::BIGNUM_LITERAL_SUFFIX,
+        clone_with_ref_variant::CLONE_WITH_REF_VARIANT,
+        collapse_adjacent_ifs::COLLAPSE_ADJACENT_IFS,
+        div_mod_projection::DIV_MOD_PROJECTION,
+        collapse_adjacent_imports::COLLAPSE_ADJACENT_IMPORTS,
+        compare_with_power_of_2::COMPARE_WITH_POWER_OF_2,
+        compare_with_primitive::COMPARE_WITH_PRIMITIVE,
+        duplicate_const::DUPLICATE_CONST,
+        hoist_shifts::HOIST_SHIFTS,
+        let_tuple_underscore_to_field::LET_TUPLE_UNDERSCORE_TO_FIELD,
+        long_lines::LONG_LINES,
+        manual_float_from_primitive::MANUAL_FLOAT_FROM_PRIMITIVE,
+        manual_fractional_part::MANUAL_FRACTIONAL_PART,
+        manual_from_sign_and_abs::MANUAL_FROM_SIGN_AND_ABS,
+        manual_half_functions::MANUAL_HALF_FUNCTIONS,
+        manual_lexicographic_cmp::MANUAL_LEXICOGRAPHIC_CMP,
+        manual_rational_significant_bits::MANUAL_RATIONAL_SIGNIFICANT_BITS,
+        missing_inline_on_delegator::MISSING_INLINE_ON_DELEGATOR,
+        mul_div_by_power_of_2::MUL_DIV_BY_POWER_OF_2,
+        mul_div_by_power_of_2_literal::MUL_DIV_BY_POWER_OF_2_LITERAL,
+        redundant_cmp_reverse::REDUNDANT_CMP_REVERSE,
+        redundant_from_in_comparison::REDUNDANT_FROM_IN_COMPARISON,
+        redundant_from_in_literal_comparison::REDUNDANT_FROM_IN_LITERAL_COMPARISON,
+        redundant_nearest::REDUNDANT_NEAREST,
+        redundant_prec_round_of_exact_constant::REDUNDANT_PREC_ROUND_OF_EXACT_CONSTANT,
+        redundant_shift_conversion::REDUNDANT_SHIFT_CONVERSION,
+        redundant_tuple_rebuild::REDUNDANT_TUPLE_REBUILD,
+        runtime_literal_conversion::RUNTIME_LITERAL_CONVERSION,
+        shift_of_one::SHIFT_OF_ONE,
+        use_assign_variant::USE_ASSIGN_VARIANT,
+        use_bits::USE_BITS,
+        use_checked_log_base_2::USE_CHECKED_LOG_BASE_2,
+        use_cmp_double::USE_CMP_DOUBLE,
+        use_cmp_product::USE_CMP_PRODUCT,
+        use_const_binding::USE_CONST_BINDING,
+        use_const_block::USE_CONST_BLOCK,
+        use_const_cast::USE_CONST_CAST,
+        use_coprime_with::USE_COPRIME_WITH,
+        use_determinant_sign::USE_DETERMINANT_SIGN,
+        use_div_mod::USE_DIV_MOD,
+        use_div_mod_precomputed::USE_DIV_MOD_PRECOMPUTED,
+        use_divisible_by::USE_DIVISIBLE_BY,
+        use_exact_from::USE_EXACT_FROM,
+        use_fused_mul::USE_FUSED_MUL,
+        use_fused_mul_shl::USE_FUSED_MUL_SHL,
+        factor_out_assignment::FACTOR_OUT_ASSIGNMENT,
+        fully_qualified_path::FULLY_QUALIFIED_PATH,
+        redundant_crate_prefix::REDUNDANT_CRATE_PREFIX,
+        use_get_bit::USE_GET_BIT,
+        use_mod_power_of_2::USE_MOD_POWER_OF_2,
+        use_mod_square::USE_MOD_SQUARE,
+        use_mul_shr_round::USE_MUL_SHR_ROUND,
+        use_named_constant::USE_NAMED_CONSTANT,
+        use_parity::USE_PARITY,
+        use_sign::USE_SIGN,
+        use_slice_test_zero::USE_SLICE_TEST_ZERO,
+        use_reciprocal::USE_RECIPROCAL,
+        use_round_variant::USE_ROUND_VARIANT,
+        use_saturating_from::USE_SATURATING_FROM,
+        use_split_in_half::USE_SPLIT_IN_HALF,
+        use_split_into_chunks::USE_SPLIT_INTO_CHUNKS,
+        use_square::USE_SQUARE,
+        use_to_string_variant::USE_TO_STRING_VARIANT,
+        use_trailing_zeros::USE_TRAILING_ZEROS,
+        use_unary_assign::USE_UNARY_ASSIGN,
+        use_abs_comparison::USE_ABS_COMPARISON,
+        use_width_mask::USE_WIDTH_MASK,
+    ]);
+    lint_store.register_late_pass(|_| {
+        Box::new(assert_ordering_equal_prefer_exact::AssertOrderingEqualPreferExact)
+    });
+    lint_store.register_late_pass(|_| Box::new(adjacent_vec_allocations::AdjacentVecAllocations));
+    lint_store.register_late_pass(|_| Box::new(collapse_adjacent_ifs::CollapseAdjacentIfs));
+    lint_store.register_late_pass(|_| Box::new(div_mod_projection::DivModProjection));
+    lint_store.register_late_pass(|_| Box::new(assign_then_consumed_once::AssignThenConsumedOnce));
+    lint_store.register_late_pass(|_| Box::new(assign_then_returned::AssignThenReturned));
+    lint_store.register_late_pass(|_| Box::new(bignum_literal_suffix::BignumLiteralSuffix));
+    lint_store.register_late_pass(|_| Box::new(compare_with_power_of_2::CompareWithPowerOf2));
+    lint_store.register_late_pass(|_| Box::new(compare_with_primitive::CompareWithPrimitive));
+    lint_store.register_late_pass(|_| Box::new(duplicate_const::DuplicateConst::default()));
+    lint_store.register_late_pass(|_| Box::new(hoist_shifts::HoistShifts));
+    lint_store
+        .register_late_pass(|_| Box::new(let_tuple_underscore_to_field::LetTupleUnderscoreToField));
+    lint_store.register_late_pass(|_| Box::new(long_lines::LongLines));
+    lint_store
+        .register_late_pass(|_| Box::new(manual_float_from_primitive::ManualFloatFromPrimitive));
+    lint_store.register_late_pass(|_| Box::new(manual_from_sign_and_abs::ManualFromSignAndAbs));
+    lint_store.register_late_pass(|_| Box::new(manual_half_functions::ManualHalfFunctions));
+    lint_store.register_late_pass(|_| Box::new(manual_lexicographic_cmp::ManualLexicographicCmp));
+    lint_store.register_late_pass(|_| {
+        Box::new(manual_rational_significant_bits::ManualRationalSignificantBits)
+    });
+    lint_store
+        .register_late_pass(|_| Box::new(missing_inline_on_delegator::MissingInlineOnDelegator));
+    lint_store.register_late_pass(|_| Box::new(mul_div_by_power_of_2::MulDivByPowerOf2));
+    lint_store
+        .register_late_pass(|_| Box::new(mul_div_by_power_of_2_literal::MulDivByPowerOf2Literal));
+    lint_store.register_late_pass(|_| Box::new(redundant_cmp_reverse::RedundantCmpReverse));
+    lint_store
+        .register_late_pass(|_| Box::new(redundant_from_in_comparison::RedundantFromInComparison));
+    lint_store.register_late_pass(|_| {
+        Box::new(redundant_from_in_literal_comparison::RedundantFromInLiteralComparison)
+    });
+    lint_store.register_late_pass(|_| Box::new(redundant_nearest::RedundantNearest));
+    lint_store.register_late_pass(|_| {
+        Box::new(redundant_prec_round_of_exact_constant::RedundantPrecRoundOfExactConstant)
+    });
+    lint_store
+        .register_late_pass(|_| Box::new(redundant_shift_conversion::RedundantShiftConversion));
+    lint_store.register_late_pass(|_| Box::new(redundant_tuple_rebuild::RedundantTupleRebuild));
+    lint_store
+        .register_late_pass(|_| Box::new(runtime_literal_conversion::RuntimeLiteralConversion));
+    lint_store.register_late_pass(|_| Box::new(manual_fractional_part::ManualFractionalPart));
+    lint_store.register_late_pass(|_| Box::new(shift_of_one::ShiftOfOne));
+    lint_store.register_late_pass(|_| Box::new(clone_with_ref_variant::CloneWithRefVariant));
+    lint_store.register_early_pass(|| Box::new(collapse_adjacent_imports::CollapseAdjacentImports));
+    lint_store.register_late_pass(|_| Box::new(use_assign_variant::UseAssignVariant));
+    lint_store.register_late_pass(|_| Box::new(use_bits::UseBits));
+    lint_store.register_late_pass(|_| Box::new(use_checked_log_base_2::UseCheckedLogBase2));
+    lint_store.register_late_pass(|_| Box::new(use_cmp_double::UseCmpDouble));
+    lint_store.register_late_pass(|_| Box::new(use_cmp_product::UseCmpProduct));
+    lint_store.register_late_pass(|_| Box::new(use_const_binding::UseConstBinding));
+    lint_store.register_late_pass(|_| Box::new(use_const_block::UseConstBlock));
+    lint_store.register_late_pass(|_| Box::new(use_const_cast::UseConstCast));
+    lint_store.register_late_pass(|_| Box::new(use_coprime_with::UseCoprimeWith));
+    lint_store.register_late_pass(|_| Box::new(use_determinant_sign::UseDeterminantSign));
+    lint_store.register_late_pass(|_| Box::new(use_divisible_by::UseDivisibleBy));
+    lint_store.register_late_pass(|_| Box::new(use_exact_from::UseExactFrom));
+    lint_store.register_late_pass(|_| Box::new(use_fused_mul::UseFusedMul));
+    lint_store.register_late_pass(|_| Box::new(use_fused_mul_shl::UseFusedMulShl));
+    lint_store.register_late_pass(|_| Box::new(use_div_mod::UseDivMod));
+    lint_store.register_late_pass(|_| Box::new(use_div_mod_precomputed::UseDivModPrecomputed));
+    lint_store.register_late_pass(|_| Box::new(factor_out_assignment::FactorOutAssignment));
+    lint_store.register_late_pass(|_| Box::new(use_get_bit::UseGetBit));
+    lint_store.register_late_pass(|_| Box::new(use_mod_power_of_2::UseModPowerOf2));
+    lint_store.register_late_pass(|_| Box::new(use_mod_square::UseModSquare));
+    lint_store.register_late_pass(|_| Box::new(use_mul_shr_round::UseMulShrRound));
+    lint_store.register_late_pass(|_| Box::new(use_named_constant::UseNamedConstant));
+    lint_store.register_late_pass(|_| Box::new(use_parity::UseParity));
+    lint_store.register_late_pass(|_| Box::new(use_sign::UseSign));
+    lint_store.register_late_pass(|_| Box::new(use_slice_test_zero::UseSliceTestZero));
+    lint_store.register_late_pass(|_| Box::new(use_reciprocal::UseReciprocal));
+    lint_store.register_late_pass(|_| Box::new(use_round_variant::UseRoundVariant));
+    lint_store.register_late_pass(|_| Box::new(use_saturating_from::UseSaturatingFrom));
+    lint_store.register_late_pass(|_| Box::new(use_split_in_half::UseSplitInHalf));
+    lint_store.register_late_pass(|_| Box::new(use_split_into_chunks::UseSplitIntoChunks));
+    lint_store.register_late_pass(|_| Box::new(use_square::UseSquare));
+    lint_store.register_late_pass(|_| Box::new(use_to_string_variant::UseToStringVariant));
+    lint_store.register_late_pass(|_| Box::new(use_trailing_zeros::UseTrailingZeros));
+    lint_store.register_late_pass(|_| Box::new(use_unary_assign::UseUnaryAssign));
+    lint_store.register_late_pass(|_| Box::new(use_abs_comparison::UseAbsComparison));
+    lint_store.register_late_pass(|_| Box::new(use_width_mask::UseWidthMask));
+    lint_store.register_late_pass(|_| Box::new(fully_qualified_path::FullyQualifiedPath));
+    lint_store
+        .register_late_pass(|_| Box::new(redundant_crate_prefix::RedundantCratePrefix::default()));
+}
+
+#[test]
+fn ui() {
+    dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), "ui")
+        .dylint_toml(
+            r#"
+            [mithqalite_lints]
+            long_lines_exceptions = [
+                { file = "main.rs", line = 3 },
+                { file = "main.rs", line = 4 },
+            ]
+            "#,
+        )
+        .run();
+}
+
+#[test]
+fn ui_examples() {
+    dylint_testing::ui_test_examples(env!("CARGO_PKG_NAME"));
+}

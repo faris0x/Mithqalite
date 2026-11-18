@@ -1,0 +1,109 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::num::comparison::traits::EqAbs;
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_float::test_util::bench::bucketers::pair_1_big_exponent_float_complexity_bucketer;
+use mithqalite_float::test_util::generators::big_exponent_float_gaussian_integer_pair_gen;
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_big_exponent_float_eq_abs_gaussian_integer);
+    register_demo!(
+        runner,
+        demo_big_exponent_float_eq_abs_gaussian_integer_debug
+    );
+    register_demo!(runner, demo_gaussian_integer_eq_abs_big_exponent_float);
+    register_demo!(
+        runner,
+        demo_gaussian_integer_eq_abs_big_exponent_float_debug
+    );
+
+    register_bench!(runner, benchmark_big_exponent_float_eq_abs_gaussian_integer);
+}
+
+fn demo_big_exponent_float_eq_abs_gaussian_integer(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, y) in big_exponent_float_gaussian_integer_pair_gen()
+        .get(gm, config)
+        .take(limit)
+    {
+        if x.eq_abs(&y) {
+            println!("|{x}| = |{y}|");
+        } else {
+            println!("|{x}| ≠ |{y}|");
+        }
+    }
+}
+
+fn demo_big_exponent_float_eq_abs_gaussian_integer_debug(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+) {
+    for (x, y) in big_exponent_float_gaussian_integer_pair_gen()
+        .get(gm, config)
+        .take(limit)
+    {
+        if x.eq_abs(&y) {
+            println!("|{x:#x}| = |{y}|");
+        } else {
+            println!("|{x:#x}| ≠ |{y}|");
+        }
+    }
+}
+
+fn demo_gaussian_integer_eq_abs_big_exponent_float(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, y) in big_exponent_float_gaussian_integer_pair_gen()
+        .get(gm, config)
+        .take(limit)
+    {
+        if y.eq_abs(&x) {
+            println!("|{y}| = |{x}|");
+        } else {
+            println!("|{y}| ≠ |{x}|");
+        }
+    }
+}
+
+fn demo_gaussian_integer_eq_abs_big_exponent_float_debug(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+) {
+    for (x, y) in big_exponent_float_gaussian_integer_pair_gen()
+        .get(gm, config)
+        .take(limit)
+    {
+        if y.eq_abs(&x) {
+            println!("|{y}| = |{x:#x}|");
+        } else {
+            println!("|{y}| ≠ |{x:#x}|");
+        }
+    }
+}
+
+fn benchmark_big_exponent_float_eq_abs_gaussian_integer(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "BigExponentFloat.eq_abs(&GaussianInteger)",
+        BenchmarkType::Single,
+        big_exponent_float_gaussian_integer_pair_gen().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &pair_1_big_exponent_float_complexity_bucketer("x"),
+        &mut [("Malachite", &mut |(x, y)| {
+            no_out!(x.eq_abs(&y));
+        })],
+    );
+}

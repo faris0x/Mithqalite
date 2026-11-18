@@ -28,7 +28,7 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          name = "malachite";
+          name = "mithqalite";
           nativeBuildInputs = [
             pkgs.pkg-config
             pkgs.clang

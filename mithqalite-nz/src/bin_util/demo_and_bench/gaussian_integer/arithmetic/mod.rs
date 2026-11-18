@@ -1,0 +1,69 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::test_util::runner::Runner;
+
+pub(crate) fn register(runner: &mut Runner) {
+    abs_squared::register(runner);
+    add::register(runner);
+    canonical_unit_i_pow::register(runner);
+    canonical_primitive_part::register(runner);
+    canonicalize_gaussian_unit::register(runner);
+    canonicalize_unit::register(runner);
+    conjugate::register(runner);
+    content_and_primitive_part::register(runner);
+    div::register(runner);
+    div_exact::register(runner);
+    div_i::register(runner);
+    div_rem::register(runner);
+    gcd::register(runner);
+    height::register(runner);
+    is_power_of_2::register(runner);
+    is_unit::register(runner);
+    mul::register(runner);
+    mul_i::register(runner);
+    mul_i_pow::register(runner);
+    neg::register(runner);
+    pow::register(runner);
+    power_of_2::register(runner);
+    rem::register(runner);
+    root::register(runner);
+    shl::register(runner);
+    sqrt::register(runner);
+    square::register(runner);
+    sub::register(runner);
+}
+
+mod abs_squared;
+mod add;
+mod canonical_primitive_part;
+mod canonical_unit_i_pow;
+mod canonicalize_gaussian_unit;
+mod canonicalize_unit;
+mod conjugate;
+mod content_and_primitive_part;
+mod div;
+mod div_exact;
+mod div_i;
+mod div_rem;
+mod gcd;
+mod height;
+mod is_power_of_2;
+mod is_unit;
+mod mul;
+mod mul_i;
+mod mul_i_pow;
+mod neg;
+mod pow;
+mod power_of_2;
+mod rem;
+mod root;
+mod shl;
+mod sqrt;
+mod square;
+mod sub;

@@ -1,0 +1,4110 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// Uses code adopted from the GNU MPFR Library.
+//
+//      Copyright 1999-2024 Free Software Foundation, Inc.
+//
+//      Contributed by the AriC and Caramba projects, INRIA.
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::BigExponentFloat;
+use crate::InnerFloat::{Finite, Infinity, NaN, Zero};
+use crate::big_exponent_float::conversion::float_from_big_exponent_float::*;
+use crate::big_exponent_float::conversion::from_rational::rational_floor_and_ceiling;
+use crate::big_exponent_float::exponential::exp::finite_can_round;
+use crate::{
+    Float, emulate_float_float_to_float_fn, emulate_rational_rational_to_float_fn,
+    floor_and_ceiling, test_overflow, test_underflow,
+};
+use alloc::borrow::Cow;
+use core::cmp::Ordering::{self, *};
+use core::cmp::max;
+use core::mem::swap;
+use mithqalite_base::num::arithmetic::traits::{ShrRoundAssign, Sign, Sqrt, SqrtAssign};
+use mithqalite_base::num::basic::floats::PrimitiveFloat;
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::num::basic::traits::{NaN as _, Zero as ZeroTrait};
+use mithqalite_base::num::conversion::traits::{ExactFrom, RoundingFrom, SaturatingFrom};
+use mithqalite_base::num::elliptic::traits::{Agm, AgmAssign};
+use mithqalite_base::num::exponential::traits::CeilingLogBase2;
+use mithqalite_base::num::logic::traits::SignificantBits;
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_nz::natural::arithmetic::float::round::float_can_round;
+use mithqalite_nz::natural::arithmetic::float::sub::exponent_shift_compare;
+use mithqalite_nz::platform::Limb;
+use mithqalite_q::Rational;
+
+// This is mpfr_cmp2 from cmp2.c, MPFR 4.3.0, for finite nonzero `BigExponentFloat`s: it compares
+// |b| with |c|, and sets `cancel` to the number of leading bits that cancel in |b| - |c|.
+// `exponent_shift_compare` takes `i64` exponents, so both are rebased to make c's exponent 0; if
+// the difference does not fit in an `i64`, no bits cancel and the exponents decide.
+fn cmp2_helper_big_exponent(
+    b: &BigExponentFloat,
+    c: &BigExponentFloat,
+    cancel: &mut u64,
+) -> Ordering {
+    let (e_b, e_c) = (b.get_exponent().unwrap(), c.get_exponent().unwrap());
+    let Ok(diff) = i64::try_from(&(e_b - e_c)) else {
+        *cancel = 0;
+        return e_b.cmp(e_c);
+    };
+    let xs = b.significand_ref().unwrap();
+    let ys = c.significand_ref().unwrap();
+    let (o, c) = exponent_shift_compare(
+        xs.as_limbs_asc(),
+        diff,
+        xs.limb_count() << Limb::LOG_WIDTH,
+        ys.as_limbs_asc(),
+        0,
+        ys.limb_count() << Limb::LOG_WIDTH,
+    );
+    *cancel = c;
+    o
+}
+
+// This is mpfr_agm from agm.c, MPFR 4.3.0 (as in `agm_prec_round_normal`), on `BigExponentFloat`s,
+// whose unbounded exponents allow arguments outside `Float`'s exponent range. Every operation keeps
+// the precision it has in `agm_prec_round_normal`. The result is rounded to `prec` bits with `rm`,
+// but may lie outside `Float`'s exponent range; `float_from_rounded_big_exponent_float` converts
+// it.
+crate_test_fn! {agm_prec_round_normal_big_exponent<'a>(
+    mut a: &'a BigExponentFloat,
+    mut b: &'a BigExponentFloat,
+    prec: u64,
+    rm: RoundingMode,
+) -> (BigExponentFloat, Ordering) {
+    if *a < 0u32 || *b < 0u32 {
+        return (BigExponentFloat::NAN, Equal);
+    }
+    let q = prec;
+    let mut working_prec = q + q.ceiling_log_base_2() + 15;
+    // b (op2) and a (op1) are the 2 operands but we want b >= a
+    match a.partial_cmp(b).unwrap() {
+        Equal => return a.round_to_prec_round_ref(prec, rm),
+        Greater => swap(&mut a, &mut b),
+        _ => {}
+    }
+    let mut increment = Limb::WIDTH;
+    let mut v;
+    loop {
+        let mut err: u64 = 0;
+        let mut u = a
+            .mul_prec_ref_ref(b, working_prec)
+            .0
+            .sqrt_prec(working_prec)
+            .0;
+        v = a.add_prec_ref_ref(b, working_prec).0 >> 1u32;
+        let mut n: u64 = 1;
+        let mut eq = 0;
+        while cmp2_helper_big_exponent(&u, &v, &mut eq) != Equal && eq <= working_prec - 2 {
+            let mut vf = u.add_prec_ref_ref(&v, working_prec).0 >> 1u32;
+            // See proof in algorithms.tex
+            if eq > working_prec >> 2 {
+                // vf = V(k)
+                let low_p = (working_prec + 1) >> 1;
+                // e = V(k-1)-U(k-1)
+                let mut w = v.sub_prec_ref_ref(&u, low_p).0;
+                // e = e^2
+                w.square_prec_assign(low_p);
+                // e*= (1/2)^2*1/4
+                w >>= 4u32;
+                // 1/4*e^2/V(k)
+                w.div_prec_assign_ref(&vf, low_p);
+                let vf_exp = vf.get_exponent().unwrap().clone();
+                v = vf.sub_prec(w, working_prec).0;
+                // 0 or 1
+                err = u64::exact_from(&(vf_exp - v.get_exponent().unwrap()));
+                break;
+            }
+            u = u
+                .mul_prec_ref_ref(&v, working_prec)
+                .0
+                .sqrt_prec(working_prec)
+                .0;
+            swap(&mut v, &mut vf);
+            n += 1;
+        }
+        // the error on v is bounded by (18n+51) ulps, or twice if there was an exponent loss in the
+        // final subtraction
+        //
+        // 18n+51 should not overflow since n is about log(p)
+        err += (18 * n + 51).ceiling_log_base_2();
+        // we should have n+2 <= 2^(p/4) [see algorithms.tex]
+        if (n + 2).ceiling_log_base_2() <= working_prec >> 2
+            && finite_can_round(&v, working_prec - err, working_prec, q, rm)
+        {
+            break;
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+    v.round_to_prec_round(prec, rm)
+}}
+
+// This is mpfr_cmp2 from cmp2.c, MPFR 4.3.0.
+fn cmp2_helper(b: &Float, c: &Float, cancel: &mut u64) -> Ordering {
+    match (b, c) {
+        (
+            Float(Finite {
+                exponent: x_exp,
+                precision: x_prec,
+                significand: x,
+                ..
+            }),
+            Float(Finite {
+                exponent: y_exp,
+                precision: y_prec,
+                significand: y,
+                ..
+            }),
+        ) => {
+            let (o, c) = exponent_shift_compare(
+                x.as_limbs_asc(),
+                i64::from(*x_exp),
+                *x_prec,
+                y.as_limbs_asc(),
+                i64::from(*y_exp),
+                *y_prec,
+            );
+            *cancel = c;
+            o
+        }
+        _ => panic!(),
+    }
+}
+
+// The exponent-scaling divisions below halve signed exponents with truncation toward zero, faithful
+// to MPFR's agm.c and to the bound proofs in the comments; `>>` (floor) would not preserve them.
+#[cfg_attr(dylint_lib = "mithqalite_lints", allow(mul_div_by_power_of_2_literal))]
+fn agm_prec_round_normal(
+    mut a: Float,
+    mut b: Float,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    if a < 0u32 || b < 0u32 {
+        return (float_nan!(), Equal);
+    }
+    let mut working_prec = prec + prec.ceiling_log_base_2() + 15;
+    // b (op2) and a (op1) are the 2 operands but we want b >= a
+    match a.partial_cmp(&b).unwrap() {
+        Equal => return Float::from_float_prec_round(a, prec, rm),
+        Greater => swap(&mut a, &mut b),
+        _ => {}
+    }
+    let mut scaleop = 0;
+    let mut increment = Limb::WIDTH;
+    let mut v;
+    let mut scaleit;
+    loop {
+        let mut err: u64 = 0;
+        let mut u;
+        loop {
+            let u_o;
+            let v_o;
+            (u, u_o) = a.mul_prec_ref_ref(&b, working_prec);
+            (v, v_o) = a.add_prec_ref_ref(&b, working_prec);
+            let u_overflow = test_overflow(&u, u_o);
+            let v_overflow = test_overflow(&v, v_o);
+            if u_overflow || v_overflow || test_underflow(&u, u_o) || test_underflow(&v, v_o) {
+                assert_eq!(scaleop, 0);
+                let e1 = a.get_exponent().unwrap();
+                let e2 = b.get_exponent().unwrap();
+                if u_overflow || v_overflow {
+                    // Let's recall that emin <= e1 <= e2 <= emax. There has been an overflow. Thus
+                    // e2 >= emax/2. If the mpfr_mul overflowed, then e1 + e2 > emax. If the
+                    // mpfr_add overflowed, then e2 = emax. We want: (e1 + scale) + (e2 + scale) <=
+                    // emax, i.e. scale <= (emax - e1 - e2) / 2. Let's take scale = min(floor((emax
+                    // - e1 - e2) / 2), -1). This is OK, as:
+                    // ```
+                    // - emin <= scale <= -1.
+                    // - e1 + scale >= emin. Indeed:
+                    //    * If e1 + e2 > emax, then
+                    //      e1 + scale >= e1 + (emax - e1 - e2) / 2 - 1
+                    //                 >= (emax + e1 - emax) / 2 - 1
+                    //                 >= e1 / 2 - 1 >= emin.
+                    //    * Otherwise, mpfr_mul didn't overflow, therefore
+                    //      mpfr_add overflowed and e2 = emax, so that
+                    //      e1 > emin (see restriction below).
+                    //      e1 + scale > emin - 1, thus e1 + scale >= emin.
+                    // - e2 + scale <= emax, since scale < 0.
+                    // ```
+                    let e_agm = e1 + e2;
+                    if e_agm > Float::MAX_EXPONENT {
+                        scaleop = -((e_agm - Float::MAX_EXPONENT + 1) / 2);
+                        assert!(scaleop < 0);
+                    } else {
+                        // The addition necessarily overflowed.
+                        assert_eq!(e2, Float::MAX_EXPONENT);
+                        // The case where e1 = emin and e2 = emax is not supported here. This would
+                        // mean that the precision of e2 would be huge (and possibly not supported
+                        // in practice anyway).
+                        assert!(e1 > Float::MIN_EXPONENT);
+                        // Note: this case is probably impossible to have in practice since we need
+                        // e2 = emax, and no overflow in the product. Since the product is >=
+                        // 2^(e1+e2-2), it implies e1 + e2 - 2 <= emax, thus e1 <= 2. Now to get an
+                        // overflow we need op1 >= 1/2 ulp(op2), which implies that the precision of
+                        // op2 should be at least emax-2. On a 64-bit computer this is impossible to
+                        // have, and would require a huge amount of memory on a 32-bit computer.
+                        scaleop = -1;
+                    }
+                } else {
+                    // underflow only (in the multiplication)
+                    //
+                    // We have e1 + e2 <= emin (so, e1 <= e2 <= 0). We want: (e1 + scale) + (e2 +
+                    // scale) >= emin + 1, i.e. scale >= (emin + 1 - e1 - e2) / 2. let's take scale
+                    // = ceil((emin + 1 - e1 - e2) / 2). This is OK, as: 1. 1 <= scale <= emax. 2.
+                    // e1 + scale >= emin + 1 >= emin. 3. e2 + scale <= scale <= emax.
+                    assert!(e1 <= e2 && e2 <= 0);
+                    scaleop = (Float::MIN_EXPONENT_PLUS_2 - e1 - e2) / 2;
+                    assert!(scaleop > 0);
+                }
+                a <<= scaleop;
+                b <<= scaleop;
+            } else {
+                break;
+            }
+        }
+        u.sqrt_assign();
+        v >>= 1u32;
+        scaleit = 0;
+        let mut n: u64 = 1;
+        let mut eq = 0;
+        'mid: while cmp2_helper(&u, &v, &mut eq) != Equal && eq <= working_prec - 2 {
+            let mut uf;
+            let mut vf;
+            loop {
+                vf = (&u + &v) >> 1u32;
+                // See proof in algorithms.tex
+                if eq > working_prec >> 2 {
+                    // vf = V(k)
+                    let low_p = (working_prec + 1) >> 1;
+                    let (mut w, o) = v.sub_prec_ref_ref(&u, low_p); // e = V(k-1)-U(k-1)
+                    let mut underflow = test_underflow(&w, o);
+                    let o = w.square_round_assign(Nearest); // e = e^2
+                    underflow |= test_underflow(&w, o);
+                    let o = w.shr_round_assign(4u32, Nearest); // e*= (1/2)^2*1/4
+                    underflow |= test_underflow(&w, o);
+                    let o = w.div_prec_assign_ref(&vf, low_p); // 1/4*e^2/V(k)
+                    underflow |= test_underflow(&w, o);
+                    let vf_exp = vf.get_exponent().unwrap();
+                    if !underflow {
+                        v = vf.sub_prec(w, working_prec).0;
+                        // 0 or 1
+                        err = u64::exact_from(vf_exp - v.get_exponent().unwrap());
+                        break 'mid;
+                    }
+                    // There has been an underflow because of the cancellation between V(k-1) and
+                    // U(k-1). Let's use the conventional method.
+                }
+                // U(k) increases, so that U.V can overflow (but not underflow).
+                uf = &u * &v;
+                // For multiplication using Nearest, is_infinite is sufficient for overflow checking
+                if uf.is_infinite() {
+                    let scale2 = -(((u.get_exponent().unwrap() + v.get_exponent().unwrap())
+                        - Float::MAX_EXPONENT
+                        + 1)
+                        / 2);
+                    u <<= scale2;
+                    v <<= scale2;
+                    scaleit += scale2;
+                } else {
+                    break;
+                }
+            }
+            u = uf.sqrt();
+            swap(&mut v, &mut vf);
+            n += 1;
+        }
+        // the error on v is bounded by (18n+51) ulps, or twice if there was an exponent loss in the
+        // final subtraction
+        //
+        // 18n+51 should not overflow since n is about log(p)
+        err += (18 * n + 51).ceiling_log_base_2();
+        // we should have n+2 <= 2^(p/4) [see algorithms.tex]
+        if (n + 2).ceiling_log_base_2() <= working_prec >> 2
+            && float_can_round(v.significand_ref().unwrap(), working_prec - err, prec, rm)
+        {
+            break;
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+    v.shr_prec_round(scaleop + scaleit, prec, rm)
+}
+
+// See `agm_prec_round_normal`: the signed exponent halving truncates toward zero on purpose.
+#[cfg_attr(dylint_lib = "mithqalite_lints", allow(mul_div_by_power_of_2_literal))]
+fn agm_prec_round_ref_ref_normal(
+    a: &Float,
+    b: &Float,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    if *a < 0u32 || *b < 0u32 {
+        return (float_nan!(), Equal);
+    }
+    let mut working_prec = prec + prec.ceiling_log_base_2() + 15;
+    let mut a = Cow::Borrowed(a);
+    let mut b = Cow::Borrowed(b);
+    // b (op2) and a (op1) are the 2 operands but we want b >= a
+    match a.partial_cmp(&b).unwrap() {
+        Equal => return Float::from_float_prec_round_ref(a.as_ref(), prec, rm),
+        Greater => swap(&mut a, &mut b),
+        _ => {}
+    }
+    let mut scaleop = 0;
+    let mut increment = Limb::WIDTH;
+    let mut v;
+    let mut scaleit;
+    loop {
+        let mut err: u64 = 0;
+        let mut u;
+        loop {
+            let u_o;
+            let v_o;
+            (u, u_o) = a.mul_prec_ref_ref(&b, working_prec);
+            (v, v_o) = a.add_prec_ref_ref(&b, working_prec);
+            let u_overflow = test_overflow(&u, u_o);
+            let v_overflow = test_overflow(&v, v_o);
+            if u_overflow || v_overflow || test_underflow(&u, u_o) || test_underflow(&v, v_o) {
+                assert_eq!(scaleop, 0);
+                let e1 = a.get_exponent().unwrap();
+                let e2 = b.get_exponent().unwrap();
+                if u_overflow || v_overflow {
+                    // Let's recall that emin <= e1 <= e2 <= emax. There has been an overflow. Thus
+                    // e2 >= emax/2. If the mpfr_mul overflowed, then e1 + e2 > emax. If the
+                    // mpfr_add overflowed, then e2 = emax. We want: (e1 + scale) + (e2 + scale) <=
+                    // emax, i.e. scale <= (emax - e1 - e2) / 2. Let's take scale = min(floor((emax
+                    // - e1 - e2) / 2), -1). This is OK, as:
+                    // ```
+                    // - emin <= scale <= -1.
+                    // - e1 + scale >= emin. Indeed:
+                    //    * If e1 + e2 > emax, then
+                    //      e1 + scale >= e1 + (emax - e1 - e2) / 2 - 1
+                    //                 >= (emax + e1 - emax) / 2 - 1
+                    //                 >= e1 / 2 - 1 >= emin.
+                    //    * Otherwise, mpfr_mul didn't overflow, therefore
+                    //      mpfr_add overflowed and e2 = emax, so that
+                    //      e1 > emin (see restriction below).
+                    //      e1 + scale > emin - 1, thus e1 + scale >= emin.
+                    // - e2 + scale <= emax, since scale < 0.
+                    // ```
+                    let e_agm = e1 + e2;
+                    if e_agm > Float::MAX_EXPONENT {
+                        scaleop = -((e_agm - Float::MAX_EXPONENT + 1) / 2);
+                        assert!(scaleop < 0);
+                    } else {
+                        // The addition necessarily overflowed.
+                        assert_eq!(e2, Float::MAX_EXPONENT);
+                        // The case where e1 = emin and e2 = emax is not supported here. This would
+                        // mean that the precision of e2 would be huge (and possibly not supported
+                        // in practice anyway).
+                        assert!(e1 > Float::MIN_EXPONENT);
+                        // Note: this case is probably impossible to have in practice since we need
+                        // e2 = emax, and no overflow in the product. Since the product is >=
+                        // 2^(e1+e2-2), it implies e1 + e2 - 2 <= emax, thus e1 <= 2. Now to get an
+                        // overflow we need op1 >= 1/2 ulp(op2), which implies that the precision of
+                        // op2 should be at least emax-2. On a 64-bit computer this is impossible to
+                        // have, and would require a huge amount of memory on a 32-bit computer.
+                        scaleop = -1;
+                    }
+                } else {
+                    // underflow only (in the multiplication)
+                    //
+                    // We have e1 + e2 <= emin (so, e1 <= e2 <= 0). We want: (e1 + scale) + (e2 +
+                    // scale) >= emin + 1, i.e. scale >= (emin + 1 - e1 - e2) / 2. let's take scale
+                    // = ceil((emin + 1 - e1 - e2) / 2). This is OK, as: 1. 1 <= scale <= emax. 2.
+                    // e1 + scale >= emin + 1 >= emin. 3. e2 + scale <= scale <= emax.
+                    assert!(e1 <= e2 && e2 <= 0);
+                    scaleop = (Float::MIN_EXPONENT_PLUS_2 - e1 - e2) / 2;
+                    assert!(scaleop > 0);
+                }
+                *a.to_mut() <<= scaleop;
+                *b.to_mut() <<= scaleop;
+            } else {
+                break;
+            }
+        }
+        u.sqrt_assign();
+        v >>= 1u32;
+        scaleit = 0;
+        let mut n: u64 = 1;
+        let mut eq = 0;
+        'mid: while cmp2_helper(&u, &v, &mut eq) != Equal && eq <= working_prec - 2 {
+            let mut uf;
+            let mut vf;
+            loop {
+                vf = (&u + &v) >> 1u32;
+                // See proof in algorithms.tex
+                if eq > working_prec >> 2 {
+                    // vf = V(k)
+                    let low_p = (working_prec + 1) >> 1;
+                    let (mut w, o) = v.sub_prec_ref_ref(&u, low_p); // e = V(k-1)-U(k-1)
+                    let mut underflow = test_underflow(&w, o);
+                    let o = w.square_round_assign(Nearest); // e = e^2
+                    underflow |= test_underflow(&w, o);
+                    let o = w.shr_round_assign(4u32, Nearest); // e*= (1/2)^2*1/4
+                    underflow |= test_underflow(&w, o);
+                    let o = w.div_prec_assign_ref(&vf, low_p); // 1/4*e^2/V(k)
+                    underflow |= test_underflow(&w, o);
+                    let vf_exp = vf.get_exponent().unwrap();
+                    if !underflow {
+                        v = vf.sub_prec(w, working_prec).0;
+                        // 0 or 1
+                        err = u64::exact_from(vf_exp - v.get_exponent().unwrap());
+                        break 'mid;
+                    }
+                    // There has been an underflow because of the cancellation between V(k-1) and
+                    // U(k-1). Let's use the conventional method.
+                }
+                // U(k) increases, so that U.V can overflow (but not underflow).
+                uf = &u * &v;
+                // For multiplication using Nearest, is_infinite is sufficient for overflow checking
+                if uf.is_infinite() {
+                    let scale2 = -(((u.get_exponent().unwrap() + v.get_exponent().unwrap())
+                        - Float::MAX_EXPONENT
+                        + 1)
+                        / 2);
+                    u <<= scale2;
+                    v <<= scale2;
+                    scaleit += scale2;
+                } else {
+                    break;
+                }
+            }
+            u = uf.sqrt();
+            swap(&mut v, &mut vf);
+            n += 1;
+        }
+        // the error on v is bounded by (18n+51) ulps, or twice if there was an exponent loss in the
+        // final subtraction
+        //
+        // 18n+51 should not overflow since n is about log(p)
+        err += (18 * n + 51).ceiling_log_base_2();
+        // we should have n+2 <= 2^(p/4) [see algorithms.tex]
+        if (n + 2).ceiling_log_base_2() <= working_prec >> 2
+            && float_can_round(v.significand_ref().unwrap(), working_prec - err, prec, rm)
+        {
+            break;
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+    v.shr_prec_round(scaleop + scaleit, prec, rm)
+}
+
+fn agm_rational_helper(
+    x: &Rational,
+    y: &Rational,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    let mut working_prec = prec + 10;
+    let mut increment = Limb::WIDTH;
+    loop {
+        let (x_lo, x_o) = Float::from_rational_prec_round_ref(x, working_prec, Floor);
+        let (y_lo, y_o) = Float::from_rational_prec_round_ref(y, working_prec, Floor);
+        if x_o == Equal && y_o == Equal {
+            return agm_prec_round_normal(x_lo, y_lo, prec, rm);
+        }
+        let (x_lo, x_hi) = floor_and_ceiling((x_lo, x_o));
+        let (y_lo, y_hi) = floor_and_ceiling((y_lo, y_o));
+        let (agm_lo, mut o_lo) = agm_prec_round_normal(x_lo, y_lo, prec, rm);
+        let (agm_hi, mut o_hi) = agm_prec_round_normal(x_hi, y_hi, prec, rm);
+        if o_lo == Equal {
+            o_lo = o_hi;
+        }
+        if o_hi == Equal {
+            o_hi = o_lo;
+        }
+        if o_lo == o_hi && agm_lo == agm_hi {
+            return (agm_lo, o_lo);
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+}
+
+// The AGM of the positive `Rational`s x and y, rounded to `prec` bits with `rm`, when x or y lies
+// outside `Float`'s exponent range. The AGM is increasing in each argument, so it lies between the
+// AGMs of the floors and of the ceilings of x and y at the working precision, which are computed as
+// `BigExponentFloat`s; once both round to the same value, so does the AGM of x and y.
+fn agm_rational_helper_big_exponent(
+    x: &Rational,
+    y: &Rational,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    let mut working_prec = prec + 10;
+    let mut increment = Limb::WIDTH;
+    loop {
+        let (x_lo, x_hi, x_exact) = rational_floor_and_ceiling(x, working_prec);
+        let (y_lo, y_hi, y_exact) = rational_floor_and_ceiling(y, working_prec);
+        let (agm_lo, mut o_lo) = agm_prec_round_normal_big_exponent(&x_lo, &y_lo, prec, rm);
+        if x_exact && y_exact {
+            return float_from_rounded_big_exponent_float(agm_lo, o_lo, prec, rm);
+        }
+        let (agm_hi, mut o_hi) = agm_prec_round_normal_big_exponent(&x_hi, &y_hi, prec, rm);
+        if o_lo == Equal {
+            o_lo = o_hi;
+        }
+        if o_hi == Equal {
+            o_hi = o_lo;
+        }
+        if o_lo == o_hi && agm_lo == agm_hi {
+            return float_from_rounded_big_exponent_float(agm_lo, o_lo, prec, rm);
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+}
+
+// x is finite and positive, q is positive, and x != q. The AGM is increasing in each argument, so
+// AGM(x, q) lies between AGM(x, q_lo) and AGM(x, q_hi), where q_lo and q_hi bracket q.
+fn agm_float_rational_helper(
+    x: &Float,
+    q: &Rational,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    let mut working_prec = prec + 10;
+    let mut increment = Limb::WIDTH;
+    loop {
+        let (q_lo, q_o) = Float::from_rational_prec_round_ref(q, working_prec, Floor);
+        if q_o == Equal {
+            return agm_prec_round_normal(x.clone(), q_lo, prec, rm);
+        }
+        let (q_lo, q_hi) = floor_and_ceiling((q_lo, q_o));
+        let (agm_lo, mut o_lo) = agm_prec_round_normal(x.clone(), q_lo, prec, rm);
+        let (agm_hi, mut o_hi) = agm_prec_round_normal(x.clone(), q_hi, prec, rm);
+        if o_lo == Equal {
+            o_lo = o_hi;
+        }
+        if o_hi == Equal {
+            o_hi = o_lo;
+        }
+        if o_lo == o_hi && agm_lo == agm_hi {
+            return (agm_lo, o_lo);
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+}
+
+// The AGM of the finite positive `Float` x and the positive `Rational` q, rounded to `prec` bits
+// with `rm`, when q lies outside `Float`'s exponent range; as in
+// `agm_rational_helper_big_exponent`, q is bracketed by `BigExponentFloat`s.
+fn agm_float_rational_helper_big_exponent(
+    x: &Float,
+    q: &Rational,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    let mut working_prec = prec + 10;
+    let mut increment = Limb::WIDTH;
+    let x = BigExponentFloat::from(x);
+    loop {
+        let (q_lo, q_hi, q_exact) = rational_floor_and_ceiling(q, working_prec);
+        let (agm_lo, mut o_lo) = agm_prec_round_normal_big_exponent(&x, &q_lo, prec, rm);
+        if q_exact {
+            return float_from_rounded_big_exponent_float(agm_lo, o_lo, prec, rm);
+        }
+        let (agm_hi, mut o_hi) = agm_prec_round_normal_big_exponent(&x, &q_hi, prec, rm);
+        if o_lo == Equal {
+            o_lo = o_hi;
+        }
+        if o_hi == Equal {
+            o_hi = o_lo;
+        }
+        if o_lo == o_hi && agm_lo == agm_hi {
+            return float_from_rounded_big_exponent_float(agm_lo, o_lo, prec, rm);
+        }
+        working_prec += increment;
+        increment = working_prec >> 1;
+    }
+}
+
+fn agm_float_rational_prec_round_ref_ref(
+    x: &Float,
+    q: &Rational,
+    prec: u64,
+    rm: RoundingMode,
+) -> (Float, Ordering) {
+    assert_ne!(prec, 0);
+    // The special cases are ordered as in `Float::agm_prec_round`: `NaN`, then infinities, then
+    // zeros, and only then negative arguments.
+    match x {
+        float_infinity!() if *q > 0u32 => return (float_infinity!(), Equal),
+        Float(NaN | Infinity { .. }) => return (float_nan!(), Equal),
+        float_either_zero!() => return (float_zero!(), Equal),
+        _ if *q == 0u32 => return (float_zero!(), Equal),
+        _ if *x < 0u32 || *q < 0u32 => return (float_nan!(), Equal),
+        _ => {}
+    }
+    if x == q {
+        return Float::from_float_prec_round_ref(x, prec, rm);
+    }
+    assert_ne!(rm, Exact, "Inexact AGM");
+    let q_exp = i32::saturating_from(q.floor_log_base_2_abs()).saturating_add(1);
+    if (Float::MIN_EXPONENT..Float::MAX_EXPONENT).contains(&q_exp) {
+        agm_float_rational_helper(x, q, prec, rm)
+    } else {
+        agm_float_rational_helper_big_exponent(x, q, prec, rm)
+    }
+}
+
+impl Float {
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// specified precision and with the specified rounding mode. Both [`Float`]s are taken by
+    /// value. An [`Ordering`] is also returned, indicating whether the rounded AGM is less than,
+    /// equal to, or greater than the exact AGM. Although `NaN`s are not comparable to any
+    /// [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p,m)=f(x,\text{NaN},p,m)=f(-\infty,x,p,m)=f(x,-\infty,p,m)=\text{NaN}$
+    /// - $f(\infty,x,p,m)=f(x,\infty,p,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p,m)=f(x,\pm0.0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_prec`] instead. If you
+    /// know that your target precision is the maximum of the precisions of the two inputs, consider
+    /// using [`Float::agm_round`] instead. If both of these things are true, consider using
+    /// [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round(Float::from(6), 5, Floor);
+    /// assert_eq!(agm.to_string(), "13.0");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round(Float::from(6), 5, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round(Float::from(6), 5, Nearest);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round(Float::from(6), 20, Floor);
+    /// assert_eq!(agm.to_string(), "13.458160");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round(Float::from(6), 20, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round(Float::from(6), 20, Nearest);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec_round(self, other: Self, prec: u64, rm: RoundingMode) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        match (&self, &other) {
+            (float_nan!(), _) | (_, float_nan!()) => (float_nan!(), Equal),
+            (float_infinity!(), x) | (x, float_infinity!()) if *x > 0.0 => {
+                (float_infinity!(), Equal)
+            }
+            (float_either_infinity!(), _) | (_, float_either_infinity!()) => (float_nan!(), Equal),
+            (float_either_zero!(), _) | (_, float_either_zero!()) => (float_zero!(), Equal),
+            _ => agm_prec_round_normal(self, other, prec, rm),
+        }
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// specified precision and with the specified rounding mode. The first [`Float`] is taken by
+    /// value and the second by reference. An [`Ordering`] is also returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p,m)=f(x,\text{NaN},p,m)=f(-\infty,x,p,m)=f(x,-\infty,p,m)=\text{NaN}$
+    /// - $f(\infty,x,p,m)=f(x,\infty,p,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p,m)=f(x,\pm0.0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_prec_val_ref`] instead.
+    /// If you know that your target precision is the maximum of the precisions of the two inputs,
+    /// consider using [`Float::agm_round_val_ref`] instead. If both of these things are true,
+    /// consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 5, Floor);
+    /// assert_eq!(agm.to_string(), "13.0");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 5, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 5, Nearest);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 20, Floor);
+    /// assert_eq!(agm.to_string(), "13.458160");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 20, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 20, Nearest);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec_round_val_ref(
+        mut self,
+        other: &Self,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        let o = self.agm_prec_round_assign_ref(other, prec, rm);
+        (self, o)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// specified precision and with the specified rounding mode. The first [`Float`] is taken by
+    /// reference and the second by value. An [`Ordering`] is also returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p,m)=f(x,\text{NaN},p,m)=f(-\infty,x,p,m)=f(x,-\infty,p,m)=\text{NaN}$
+    /// - $f(\infty,x,p,m)=f(x,\infty,p,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p,m)=f(x,\pm0.0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_prec_ref_val`] instead.
+    /// If you know that your target precision is the maximum of the precisions of the two inputs,
+    /// consider using [`Float::agm_round_ref_val`] instead. If both of these things are true,
+    /// consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_val_ref(&Float::from(6), 5, Floor);
+    /// assert_eq!(agm.to_string(), "13.0");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_val(Float::from(6), 5, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_val(Float::from(6), 5, Nearest);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_val(Float::from(6), 20, Floor);
+    /// assert_eq!(agm.to_string(), "13.458160");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_val(Float::from(6), 20, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_val(Float::from(6), 20, Nearest);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec_round_ref_val(
+        &self,
+        mut other: Self,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        let o = other.agm_prec_round_assign_ref(self, prec, rm);
+        (other, o)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// specified precision and with the specified rounding mode. Both [`Float`]s are taken by
+    /// reference. An [`Ordering`] is also returned, indicating whether the rounded AGM is less
+    /// than, equal to, or greater than the exact AGM. Although `NaN`s are not comparable to any
+    /// [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p,m)=f(x,\text{NaN},p,m)=f(-\infty,x,p,m)=f(x,-\infty,p,m)=\text{NaN}$
+    /// - $f(\infty,x,p,m)=f(x,\infty,p,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p,m)=f(x,\pm0.0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_prec_ref_ref`] instead.
+    /// If you know that your target precision is the maximum of the precisions of the two inputs,
+    /// consider using [`Float::agm_round_ref_ref`] instead. If both of these things are true,
+    /// consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_ref(&Float::from(6), 5, Floor);
+    /// assert_eq!(agm.to_string(), "13.0");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_ref(&Float::from(6), 5, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_ref(&Float::from(6), 5, Nearest);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_ref(&Float::from(6), 20, Floor);
+    /// assert_eq!(agm.to_string(), "13.458160");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_ref(&Float::from(6), 20, Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_round_ref_ref(&Float::from(6), 20, Nearest);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    ///
+    /// This is mpfr_agm from agm.c, MPFR 4.3.0.
+    #[inline]
+    pub fn agm_prec_round_ref_ref(
+        &self,
+        other: &Self,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        match (self, other) {
+            (float_nan!(), _) | (_, float_nan!()) => (float_nan!(), Equal),
+            (float_infinity!(), x) | (x, float_infinity!()) if *x > 0.0 => {
+                (float_infinity!(), Equal)
+            }
+            (float_either_infinity!(), _) | (_, float_either_infinity!()) => (float_nan!(), Equal),
+            (float_either_zero!(), _) | (_, float_either_zero!()) => (float_zero!(), Equal),
+            _ => agm_prec_round_ref_ref_normal(self, other, prec, rm),
+        }
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// nearest value of the specified precision. Both [`Float`]s are taken by value. An
+    /// [`Ordering`] is also returned, indicating whether the rounded AGM is less than, equal to, or
+    /// greater than the exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// If the agm is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p)=f(x,\text{NaN},p)=f(-\infty,x,p)=f(x,-\infty,p)=\text{NaN}$
+    /// - $f(\infty,x,p)=f(x,\infty,p)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p)=f(x,\pm0.0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_round`] instead. If you know that your target precision is the maximum of
+    /// the precisions of the two inputs, consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec(Float::from(6), 5);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec(Float::from(6), 20);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec(self, other: Self, prec: u64) -> (Self, Ordering) {
+        self.agm_prec_round(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// nearest value of the specified precision. The first [`Float`] is taken by value and the
+    /// second by reference. An [`Ordering`] is also returned, indicating whether the rounded AGM is
+    /// less than, equal to, or greater than the exact AGM. Although `NaN`s are not comparable to
+    /// any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// If the agm is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p)=f(x,\text{NaN},p)=f(-\infty,x,p)=f(x,-\infty,p)=\text{NaN}$
+    /// - $f(\infty,x,p)=f(x,\infty,p)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p)=f(x,\pm0.0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_round_val_ref`] instead. If you know that your target precision is the
+    /// maximum of the precisions of the two inputs, consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_val_ref(&Float::from(6), 5);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_prec_val_ref(&Float::from(6), 20);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec_val_ref(self, other: &Self, prec: u64) -> (Self, Ordering) {
+        self.agm_prec_round_val_ref(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// nearest value of the specified precision. The first [`Float`] is taken by reference and the
+    /// second by value. An [`Ordering`] is also returned, indicating whether the rounded AGM is
+    /// less than, equal to, or greater than the exact AGM. Although `NaN`s are not comparable to
+    /// any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// If the agm is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p)=f(x,\text{NaN},p)=f(-\infty,x,p)=f(x,-\infty,p)=\text{NaN}$
+    /// - $f(\infty,x,p)=f(x,\infty,p)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p)=f(x,\pm0.0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_round_ref_val`] instead. If you know that your target precision is the
+    /// maximum of the precisions of the two inputs, consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = (&Float::from(24)).agm_prec_ref_val(Float::from(6), 5);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = (&Float::from(24)).agm_prec_ref_val(Float::from(6), 20);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec_ref_val(&self, other: Self, prec: u64) -> (Self, Ordering) {
+        self.agm_prec_round_ref_val(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result to the
+    /// nearest value of the specified precision. Both [`Float`]s are taken by reference. An
+    /// [`Ordering`] is also returned, indicating whether the rounded AGM is less than, equal to, or
+    /// greater than the exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// If the agm is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,p)=f(x,\text{NaN},p)=f(-\infty,x,p)=f(x,-\infty,p)=\text{NaN}$
+    /// - $f(\infty,x,p)=f(x,\infty,p)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,p)=f(x,\pm0.0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_round_ref_ref`] instead. If you know that your target precision is the
+    /// maximum of the precisions of the two inputs, consider using [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = (&Float::from(24)).agm_prec_ref_ref(&Float::from(6), 5);
+    /// assert_eq!(agm.to_string(), "13.5");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = (&Float::from(24)).agm_prec_ref_ref(&Float::from(6), 20);
+    /// assert_eq!(agm.to_string(), "13.458176");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_prec_ref_ref(&self, other: &Self, prec: u64) -> (Self, Ordering) {
+        self.agm_prec_round_ref_ref(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result with the
+    /// specified rounding mode. Both [`Float`]s are taken by value. An [`Ordering`] is also
+    /// returned, indicating whether the rounded AGM is less than, equal to, or greater than the
+    /// exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever this function
+    /// returns a `NaN` it also returns `Equal`.
+    ///
+    /// The precision of the output is the maximum of the precision of the inputs. See
+    /// [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,m)=f(x,\text{NaN},m)=f(-\infty,x,m)=f(x,-\infty,m)=\text{NaN}$
+    /// - $f(\infty,x,m)=f(x,\infty,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,m)=f(x,\pm0.0,m)=0.0$
+    /// - $f(x,y,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to specify an output precision, consider using [`Float::agm_prec_round`]
+    /// instead. If you know you'll be using the `Nearest` rounding mode, consider using
+    /// [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round(Float::from(6), Floor);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156964");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round(Float::from(6), Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round(Float::from(6), Nearest);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_round(self, other: Self, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result with the
+    /// specified rounding mode. The first [`Float`] is taken by value and the second by reference.
+    /// An [`Ordering`] is also returned, indicating whether the rounded AGM is less than, equal to,
+    /// or greater than the exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The precision of the output is the maximum of the precision of the inputs. See
+    /// [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,m)=f(x,\text{NaN},m)=f(-\infty,x,m)=f(x,-\infty,m)=\text{NaN}$
+    /// - $f(\infty,x,m)=f(x,\infty,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,m)=f(x,\pm0.0,m)=0.0$
+    /// - $f(x,y,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to specify an output precision, consider using [`Float::agm_prec_round_val_ref`]
+    /// instead. If you know you'll be using the `Nearest` rounding mode, consider using
+    /// [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`, and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round_val_ref(&Float::from(6), Floor);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156964");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round_val_ref(&Float::from(6), Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round_val_ref(&Float::from(6), Nearest);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_round_val_ref(self, other: &Self, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_val_ref(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result with the
+    /// specified rounding mode. The first [`Float`] is taken by reference and the second by value.
+    /// An [`Ordering`] is also returned, indicating whether the rounded AGM is less than, equal to,
+    /// or greater than the exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// The precision of the output is the maximum of the precision of the inputs. See
+    /// [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,m)=f(x,\text{NaN},m)=f(-\infty,x,m)=f(x,-\infty,m)=\text{NaN}$
+    /// - $f(\infty,x,m)=f(x,\infty,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,m)=f(x,\pm0.0,m)=0.0$
+    /// - $f(x,y,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to specify an output precision, consider using [`Float::agm_prec_round_ref_val`]
+    /// instead. If you know you'll be using the `Nearest` rounding mode, consider using
+    /// [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`, and $m$ is `self.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) =
+    ///     (&Float::from_unsigned_prec(24u8, 100).0).agm_round_ref_val(Float::from(6), Floor);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156964");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) =
+    ///     (&Float::from_unsigned_prec(24u8, 100).0).agm_round_ref_val(Float::from(6), Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) =
+    ///     (&Float::from_unsigned_prec(24u8, 100).0).agm_round_ref_val(Float::from(6), Nearest);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_round_ref_val(&self, other: Self, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_ref_val(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, rounding the result with the
+    /// specified rounding mode. Both [`Float`]s are taken by reference. An [`Ordering`] is also
+    /// returned, indicating whether the rounded AGM is less than, equal to, or greater than the
+    /// exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever this function
+    /// returns a `NaN` it also returns `Equal`.
+    ///
+    /// The precision of the output is the maximum of the precision of the inputs. See
+    /// [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x,m)=f(x,\text{NaN},m)=f(-\infty,x,m)=f(x,-\infty,m)=\text{NaN}$
+    /// - $f(\infty,x,m)=f(x,\infty,m)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x,m)=f(x,\pm0.0,m)=0.0$
+    /// - $f(x,y,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to specify an output precision, consider using [`Float::agm_prec_round_ref_ref`]
+    /// instead. If you know you'll be using the `Nearest` rounding mode, consider using
+    /// [`Float::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round_ref_ref(&Float::from(6), Floor);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156964");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round_ref_ref(&Float::from(6), Ceiling);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from_unsigned_prec(24u8, 100)
+    ///     .0
+    ///     .agm_round_ref_ref(&Float::from(6), Nearest);
+    /// assert_eq!(agm.to_string(), "13.458171481725615420766813156976");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_round_ref_ref(&self, other: &Self, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_ref_ref(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and rounding the result to the specified precision and with the specified rounding
+    /// mode. The [`Float`] on the right-hand side is taken by value. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// x \gets \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// See the [`Float::agm_prec_round`] documentation for information on special cases, overflow,
+    /// and underflow.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_prec_assign`] instead. If
+    /// you know that your target precision is the maximum of the precisions of the two inputs,
+    /// consider using [`Float::agm_round_assign`] instead. If both of these things are true,
+    /// consider using [`Float::agm_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_round_assign(Float::from(6), 5, Floor), Less);
+    /// assert_eq!(x.to_string(), "13.0");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_round_assign(Float::from(6), 5, Ceiling), Greater);
+    /// assert_eq!(x.to_string(), "13.5");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_round_assign(Float::from(6), 5, Nearest), Greater);
+    /// assert_eq!(x.to_string(), "13.5");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_round_assign(Float::from(6), 20, Floor), Less);
+    /// assert_eq!(x.to_string(), "13.458160");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign(Float::from(6), 20, Ceiling),
+    ///     Greater
+    /// );
+    /// assert_eq!(x.to_string(), "13.458176");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign(Float::from(6), 20, Nearest),
+    ///     Greater
+    /// );
+    /// assert_eq!(x.to_string(), "13.458176");
+    /// ```
+    #[inline]
+    pub fn agm_prec_round_assign(&mut self, other: Self, prec: u64, rm: RoundingMode) -> Ordering {
+        let o;
+        let mut x = Self::ZERO;
+        swap(&mut x, self);
+        (*self, o) = x.agm_prec_round(other, prec, rm);
+        o
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and rounding the result to the specified precision and with the specified rounding
+    /// mode. The [`Float`] on the right-hand side is taken by reference. An [`Ordering`] is
+    /// returned, indicating whether the rounded AGM is less than, equal to, or greater than the
+    /// exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever this function sets
+    /// the [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// x \gets \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// See the [`Float::agm_prec_round`] documentation for information on special cases, overflow,
+    /// and underflow.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_prec_assign_ref`]
+    /// instead. If you know that your target precision is the maximum of the precisions of the two
+    /// inputs, consider using [`Float::agm_round_assign_ref`] instead. If both of these things are
+    /// true, consider using [`Float::agm_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_round_assign_ref(&Float::from(6), 5, Floor), Less);
+    /// assert_eq!(x.to_string(), "13.0");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign_ref(&Float::from(6), 5, Ceiling),
+    ///     Greater
+    /// );
+    /// assert_eq!(x.to_string(), "13.5");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign_ref(&Float::from(6), 5, Nearest),
+    ///     Greater
+    /// );
+    /// assert_eq!(x.to_string(), "13.5");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign_ref(&Float::from(6), 20, Floor),
+    ///     Less
+    /// );
+    /// assert_eq!(x.to_string(), "13.458160");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign_ref(&Float::from(6), 20, Ceiling),
+    ///     Greater
+    /// );
+    /// assert_eq!(x.to_string(), "13.458176");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(
+    ///     x.agm_prec_round_assign_ref(&Float::from(6), 20, Nearest),
+    ///     Greater
+    /// );
+    /// assert_eq!(x.to_string(), "13.458176");
+    /// ```
+    #[inline]
+    pub fn agm_prec_round_assign_ref(
+        &mut self,
+        other: &Self,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> Ordering {
+        let o;
+        (*self, o) = self.agm_prec_round_ref_ref(other, prec, rm);
+        o
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and rounding the result to the nearest value of the specified precision. The
+    /// [`Float`] on the right-hand side is taken by value. An [`Ordering`] is returned, indicating
+    /// whether the rounded AGM is less than, equal to, or greater than the exact AGM. Although
+    /// `NaN`s are not comparable to any [`Float`], whenever this function sets the [`Float`] to
+    /// `NaN` it also returns `Equal`.
+    ///
+    /// If the agm is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// x \gets \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// See the [`Float::agm_prec`] documentation for information on special cases, overflow, and
+    /// underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_round_assign`] instead. If you know that your target precision is the
+    /// maximum of the precisions of the two inputs, consider using [`Float::agm_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_assign(Float::from(6), 5), Greater);
+    /// assert_eq!(x.to_string(), "13.5");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_assign(Float::from(6), 20), Greater);
+    /// assert_eq!(x.to_string(), "13.458176");
+    /// ```
+    #[inline]
+    pub fn agm_prec_assign(&mut self, other: Self, prec: u64) -> Ordering {
+        self.agm_prec_round_assign(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and rounding the result to the nearest value of the specified precision. The
+    /// [`Float`] on the right-hand side is taken by reference. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// If the agm is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// x \gets \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// See the [`Float::agm_prec`] documentation for information on special cases, overflow, and
+    /// underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_round_assign_ref`] instead. If you know that your target precision is the
+    /// maximum of the precisions of the two inputs, consider using [`Float::agm_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(self.significant_bits(), other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_assign_ref(&Float::from(6), 5), Greater);
+    /// assert_eq!(x.to_string(), "13.5");
+    ///
+    /// let mut x = Float::from(24);
+    /// assert_eq!(x.agm_prec_assign_ref(&Float::from(6), 20), Greater);
+    /// assert_eq!(x.to_string(), "13.458176");
+    /// ```
+    #[inline]
+    pub fn agm_prec_assign_ref(&mut self, other: &Self, prec: u64) -> Ordering {
+        self.agm_prec_round_assign_ref(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and rounding the result with the specified rounding mode. The [`Float`] on the
+    /// right-hand side is taken by value. An [`Ordering`] is returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function sets the [`Float`] to `NaN` it also
+    /// returns `Equal`.
+    ///
+    /// The precision of the output is the maximum of the precision of the inputs. See
+    /// [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// x \gets \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs.
+    ///
+    /// See the [`Float::agm_round`] documentation for information on special cases, overflow, and
+    /// underflow.
+    ///
+    /// If you want to specify an output precision, consider using [`Float::agm_prec_round_assign`]
+    /// instead. If you know you'll be using the `Nearest` rounding mode, consider using
+    /// [`Float::agm_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// assert_eq!(x.agm_round_assign(Float::from(6), Floor), Less);
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156964");
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// assert_eq!(x.agm_round_assign(Float::from(6), Ceiling), Greater);
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156976");
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// assert_eq!(x.agm_round_assign(Float::from(6), Nearest), Greater);
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156976");
+    /// ```
+    #[inline]
+    pub fn agm_round_assign(&mut self, other: Self, rm: RoundingMode) -> Ordering {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_assign(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and rounding the result with the specified rounding mode. The [`Float`] on the
+    /// right-hand side is taken by reference. An [`Ordering`] is returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function sets the [`Float`] to `NaN` it also
+    /// returns `Equal`.
+    ///
+    /// The precision of the output is the maximum of the precision of the inputs. See
+    /// [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// x \gets \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the
+    ///   inputs.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs.
+    ///
+    /// See the [`Float::agm_round`] documentation for information on special cases, overflow, and
+    /// underflow.
+    ///
+    /// If you want to specify an output precision, consider using
+    /// [`Float::agm_prec_round_assign_ref`] instead. If you know you'll be using the `Nearest`
+    /// rounding mode, consider using [`Float::agm_assign`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`, and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Float`] arguments are positive and distinct (and the
+    /// exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// assert_eq!(x.agm_round_assign_ref(&Float::from(6), Floor), Less);
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156964");
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// assert_eq!(x.agm_round_assign_ref(&Float::from(6), Ceiling), Greater);
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156976");
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// assert_eq!(x.agm_round_assign_ref(&Float::from(6), Nearest), Greater);
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156976");
+    /// ```
+    #[inline]
+    pub fn agm_round_assign_ref(&mut self, other: &Self, rm: RoundingMode) -> Ordering {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_assign_ref(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the specified precision and with the specified rounding mode, and returning the result as a
+    /// [`Float`]. Both [`Rational`]s are taken by value. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p,m)=f(x,0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,t,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_rational_prec`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Floor,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851093");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[allow(clippy::needless_pass_by_value)]
+    #[inline]
+    pub fn agm_rational_prec_round(
+        x: Rational,
+        y: Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        Self::agm_rational_prec_round_val_ref(x, &y, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the specified precision and with the specified rounding mode, and returning the result as a
+    /// [`Float`]. The first [`Rational`]s is taken by value and the second by reference. An
+    /// [`Ordering`] is also returned, indicating whether the rounded AGM is less than, equal to, or
+    /// greater than the exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p,m)=f(x,0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,t,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_rational_prec_val_ref`]
+    /// instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_val_ref(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Floor,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851093");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_val_ref(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_val_ref(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    pub fn agm_rational_prec_round_val_ref(
+        x: Rational,
+        y: &Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        match (x.sign(), y.sign()) {
+            (Equal, _) | (_, Equal) => return (float_zero!(), Equal),
+            (Less, _) | (_, Less) => return (float_nan!(), Equal),
+            _ => {}
+        }
+        if x == *y {
+            return Self::from_rational_prec_round(x, prec, rm);
+        }
+        assert_ne!(rm, Exact, "Inexact AGM");
+        let x_exp = i32::saturating_from(x.floor_log_base_2_abs()).saturating_add(1);
+        let y_exp = i32::saturating_from(y.floor_log_base_2_abs()).saturating_add(1);
+        let x_overflow = x_exp > Self::MAX_EXPONENT;
+        let y_overflow = y_exp > Self::MAX_EXPONENT;
+        let x_underflow = x_exp < Self::MIN_EXPONENT;
+        let y_underflow = y_exp < Self::MIN_EXPONENT;
+        match (x_overflow, y_overflow, x_underflow, y_underflow) {
+            (true, true, _, _) => Self::from_rational_prec_round(x, prec, rm),
+            (_, _, true, true)
+                if rm != Nearest
+                    || x_exp < Self::MIN_EXPONENT_MINUS_1 && y_exp < Self::MIN_EXPONENT_MINUS_1 =>
+            {
+                Self::from_rational_prec_round(x, prec, rm)
+            }
+            (false, false, false, false)
+                if x_exp < Self::MAX_EXPONENT && y_exp < Self::MAX_EXPONENT =>
+            {
+                agm_rational_helper(&x, y, prec, rm)
+            }
+            _ => agm_rational_helper_big_exponent(&x, y, prec, rm),
+        }
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the specified precision and with the specified rounding mode, and returning the result as a
+    /// [`Float`]. The first [`Rational`]s is taken by reference and the second by value. An
+    /// [`Ordering`] is also returned, indicating whether the rounded AGM is less than, equal to, or
+    /// greater than the exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever
+    /// this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p,m)=f(x,0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,t,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_rational_prec_ref_val`]
+    /// instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_ref_val(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Floor,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851093");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_ref_val(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_ref_val(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    pub fn agm_rational_prec_round_ref_val(
+        x: &Rational,
+        y: Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        match (x.sign(), y.sign()) {
+            (Equal, _) | (_, Equal) => return (float_zero!(), Equal),
+            (Less, _) | (_, Less) => return (float_nan!(), Equal),
+            _ => {}
+        }
+        if *x == y {
+            return Self::from_rational_prec_round(y, prec, rm);
+        }
+        assert_ne!(rm, Exact, "Inexact AGM");
+        let x_exp = i32::saturating_from(x.floor_log_base_2_abs()).saturating_add(1);
+        let y_exp = i32::saturating_from(y.floor_log_base_2_abs()).saturating_add(1);
+        let x_overflow = x_exp > Self::MAX_EXPONENT;
+        let y_overflow = y_exp > Self::MAX_EXPONENT;
+        let x_underflow = x_exp < Self::MIN_EXPONENT;
+        let y_underflow = y_exp < Self::MIN_EXPONENT;
+        match (x_overflow, y_overflow, x_underflow, y_underflow) {
+            (true, true, _, _) => Self::from_rational_prec_round(y, prec, rm),
+            (_, _, true, true)
+                if rm != Nearest
+                    || x_exp < Self::MIN_EXPONENT_MINUS_1 && y_exp < Self::MIN_EXPONENT_MINUS_1 =>
+            {
+                Self::from_rational_prec_round(y, prec, rm)
+            }
+            (false, false, false, false)
+                if x_exp < Self::MAX_EXPONENT && y_exp < Self::MAX_EXPONENT =>
+            {
+                agm_rational_helper(x, &y, prec, rm)
+            }
+            _ => agm_rational_helper_big_exponent(x, &y, prec, rm),
+        }
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the specified precision and with the specified rounding mode, and returning the result as a
+    /// [`Float`]. Both [`Rational`]s are taken by reference. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p,m)=f(x,0,p,m)=0.0$
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead, where `p` is the precision of the input.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,t,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_rational_prec_ref_ref`]
+    /// instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_ref_ref(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Floor,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851093");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_ref_ref(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_round_ref_ref(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    pub fn agm_rational_prec_round_ref_ref(
+        x: &Rational,
+        y: &Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        assert_ne!(prec, 0);
+        match (x.sign(), y.sign()) {
+            (Equal, _) | (_, Equal) => return (float_zero!(), Equal),
+            (Less, _) | (_, Less) => return (float_nan!(), Equal),
+            _ => {}
+        }
+        if x == y {
+            return Self::from_rational_prec_round_ref(x, prec, rm);
+        }
+        assert_ne!(rm, Exact, "Inexact AGM");
+        let x_exp = i32::saturating_from(x.floor_log_base_2_abs()).saturating_add(1);
+        let y_exp = i32::saturating_from(y.floor_log_base_2_abs()).saturating_add(1);
+        let x_overflow = x_exp > Self::MAX_EXPONENT;
+        let y_overflow = y_exp > Self::MAX_EXPONENT;
+        let x_underflow = x_exp < Self::MIN_EXPONENT;
+        let y_underflow = y_exp < Self::MIN_EXPONENT;
+        match (x_overflow, y_overflow, x_underflow, y_underflow) {
+            (true, true, _, _) => Self::from_rational_prec_round_ref(x, prec, rm),
+            (_, _, true, true)
+                if rm != Nearest
+                    || x_exp < Self::MIN_EXPONENT_MINUS_1 && y_exp < Self::MIN_EXPONENT_MINUS_1 =>
+            {
+                Self::from_rational_prec_round_ref(x, prec, rm)
+            }
+            (false, false, false, false)
+                if x_exp < Self::MAX_EXPONENT && y_exp < Self::MAX_EXPONENT =>
+            {
+                agm_rational_helper(x, y, prec, rm)
+            }
+            _ => agm_rational_helper_big_exponent(x, y, prec, rm),
+        }
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the nearest value of the specified precision, and returning the result as a [`Float`]. Both
+    /// [`Rational`]s are taken by value. An [`Ordering`] is also returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p)=f(x,0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p)\geq 2^{2^{30}-1}$, $\infty$ is returned instead.
+    /// - If $0<f(x,y,p)\leq2^{-2^{30}-1}$, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p)<2^{-2^{30}}$, $2^{-2^{30}}$ is returned instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_rational_prec_round`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[allow(clippy::needless_pass_by_value)]
+    #[inline]
+    pub fn agm_rational_prec(x: Rational, y: Rational, prec: u64) -> (Self, Ordering) {
+        Self::agm_rational_prec_round_val_ref(x, &y, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the nearest value of the specified precision, and returning the result as a [`Float`]. The
+    /// first [`Rational`] is taken by value and the second by reference. An [`Ordering`] is also
+    /// returned, indicating whether the rounded AGM is less than, equal to, or greater than the
+    /// exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever this function
+    /// returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p)=f(x,0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p)\geq 2^{2^{30}-1}$, $\infty$ is returned instead.
+    /// - If $0<f(x,y,p)\leq2^{-2^{30}-1}$, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p)<2^{-2^{30}}$, $2^{-2^{30}}$ is returned instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_rational_prec_round_val_ref`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_val_ref(
+    ///     Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_rational_prec_val_ref(x: Rational, y: &Rational, prec: u64) -> (Self, Ordering) {
+        Self::agm_rational_prec_round_val_ref(x, y, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the nearest value of the specified precision, and returning the result as a [`Float`]. The
+    /// first [`Rational`] is taken by reference and the second by value. An [`Ordering`] is also
+    /// returned, indicating whether the rounded AGM is less than, equal to, or greater than the
+    /// exact AGM. Although `NaN`s are not comparable to any [`Float`], whenever this function
+    /// returns a `NaN` it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p)=f(x,0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p)\geq 2^{2^{30}-1}$, $\infty$ is returned instead.
+    /// - If $0<f(x,y,p)\leq2^{-2^{30}-1}$, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p)<2^{-2^{30}}$, $2^{-2^{30}}$ is returned instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_rational_prec_round_ref_val`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_ref_val(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_rational_prec_ref_val(x: &Rational, y: Rational, prec: u64) -> (Self, Ordering) {
+        Self::agm_rational_prec_round_ref_val(x, y, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, rounding the result to
+    /// the nearest value of the specified precision, and returning the result as a [`Float`]. Both
+    /// [`Rational`]s are taken by reference. An [`Ordering`] is also returned, indicating whether
+    /// the rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are
+    /// not comparable to any [`Float`], whenever this function returns a `NaN` it also returns
+    /// `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(0,x,p)=f(x,0,p)=0.0$
+    /// - $f(x,y,p)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p)\geq 2^{2^{30}-1}$, $\infty$ is returned instead.
+    /// - If $0<f(x,y,p)\leq2^{-2^{30}-1}$, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p)<2^{-2^{30}}$, $2^{-2^{30}}$ is returned instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_rational_prec_round_ref_ref`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `prec`, and $m$ is
+    /// `max(x.significant_bits(), y.significant_bits())`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the two [`Rational`] arguments are positive and distinct (and
+    /// the exact result is therefore irrational).
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::agm_rational_prec_ref_ref(
+    ///     &Rational::from_unsigneds(2u8, 3),
+    ///     &Rational::from_unsigneds(1u8, 5),
+    ///     20,
+    /// );
+    /// assert_eq!(agm.to_string(), "0.39851141");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_rational_prec_ref_ref(x: &Rational, y: &Rational, prec: u64) -> (Self, Ordering) {
+        Self::agm_rational_prec_round_ref_ref(x, y, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and with the specified rounding mode. Both the [`Float`]
+    /// and the [`Rational`] are taken by value. An [`Ordering`] is also returned, indicating
+    /// whether the rounded AGM is less than, equal to, or greater than the exact AGM. Although
+    /// `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN` it also
+    /// returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},y,p,m)=f(-\infty,y,p,m)=\text{NaN}$
+    /// - $f(\infty,y,p,m)=\infty$ if $y>0$, and $\text{NaN}$ otherwise
+    /// - $f(\pm0.0,y,p,m)=0.0$
+    /// - $f(x,0,p,m)=0.0$ if $x$ is finite
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x$ and $y$ are nonzero and $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Float::agm_float_rational_prec`]
+    /// instead. If you know that your target precision is the precision of the [`Float`] input,
+    /// consider using [`Float::agm_float_rational_round`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(prec, self.significant_bits())`,
+    /// and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero, or if `rm` is `Exact` but the result is not exact, which happens
+    /// unless one argument is zero or infinite or the two arguments are equal.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) = Float::from(24).agm_float_rational_prec_round(
+    ///     Rational::from_unsigneds(1u8, 3),
+    ///     20,
+    ///     Floor,
+    /// );
+    /// assert_eq!(agm.to_string(), "6.6568680");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) = Float::from(24).agm_float_rational_prec_round(
+    ///     Rational::from_unsigneds(1u8, 3),
+    ///     20,
+    ///     Ceiling,
+    /// );
+    /// assert_eq!(agm.to_string(), "6.6568756");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) = Float::from(24).agm_float_rational_prec_round(
+    ///     Rational::from_unsigneds(1u8, 3),
+    ///     20,
+    ///     Nearest,
+    /// );
+    /// assert_eq!(agm.to_string(), "6.6568756");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[allow(clippy::needless_pass_by_value)]
+    #[inline]
+    pub fn agm_float_rational_prec_round(
+        self,
+        other: Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        agm_float_rational_prec_round_ref_ref(&self, &other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and with the specified rounding mode. The [`Float`] is
+    /// taken by value and the [`Rational`] by reference. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_prec_round_val_ref(
+        self,
+        other: &Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        agm_float_rational_prec_round_ref_ref(&self, other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and with the specified rounding mode. The [`Float`] is
+    /// taken by reference and the [`Rational`] by value. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[allow(clippy::needless_pass_by_value)]
+    #[inline]
+    pub fn agm_float_rational_prec_round_ref_val(
+        &self,
+        other: Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        agm_float_rational_prec_round_ref_ref(self, &other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and with the specified rounding mode. Both the [`Float`]
+    /// and the [`Rational`] are taken by reference. An [`Ordering`] is also returned, indicating
+    /// whether the rounded AGM is less than, equal to, or greater than the exact AGM. Although
+    /// `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN` it also
+    /// returns `Equal`.
+    ///
+    /// See [`RoundingMode`] for a description of the possible rounding modes.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_prec_round_ref_ref(
+        &self,
+        other: &Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        agm_float_rational_prec_round_ref_ref(self, other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and to the nearest value. Both the [`Float`] and the
+    /// [`Rational`] are taken by value. An [`Ordering`] is also returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// If the AGM is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is `prec`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},y,p,m)=f(-\infty,y,p,m)=\text{NaN}$
+    /// - $f(\infty,y,p,m)=\infty$ if $y>0$, and $\text{NaN}$ otherwise
+    /// - $f(\pm0.0,y,p,m)=0.0$
+    /// - $f(x,0,p,m)=0.0$ if $x$ is finite
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x$ and $y$ are nonzero and $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_prec_round`] instead. If you know that your target precision is
+    /// the precision of the [`Float`] input, consider using [`Agm::agm`] instead.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(prec, self.significant_bits())`,
+    /// and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// let (agm, o) =
+    ///     Float::from(24).agm_float_rational_prec(Rational::from_unsigneds(1u8, 3), 20);
+    /// assert_eq!(agm.to_string(), "6.6568756");
+    /// assert_eq!(o, Greater);
+    ///
+    /// let (agm, o) =
+    ///     Float::from(24).agm_float_rational_prec(Rational::from_unsigneds(1u8, 3), 100);
+    /// assert_eq!(agm.to_string(), "6.6568740624918905960055565225339");
+    /// assert_eq!(o, Less);
+    /// ```
+    #[inline]
+    pub fn agm_float_rational_prec(self, other: Rational, prec: u64) -> (Self, Ordering) {
+        self.agm_float_rational_prec_round(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and to the nearest value. The [`Float`] is taken by value
+    /// and the [`Rational`] by reference. An [`Ordering`] is also returned, indicating whether the
+    /// rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are not
+    /// comparable to any [`Float`], whenever this function returns a `NaN` it also returns `Equal`.
+    ///
+    /// If the AGM is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_prec_val_ref(self, other: &Rational, prec: u64) -> (Self, Ordering) {
+        self.agm_float_rational_prec_round_val_ref(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and to the nearest value. The [`Float`] is taken by
+    /// reference and the [`Rational`] by value. An [`Ordering`] is also returned, indicating
+    /// whether the rounded AGM is less than, equal to, or greater than the exact AGM. Although
+    /// `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN` it also
+    /// returns `Equal`.
+    ///
+    /// If the AGM is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_prec_ref_val(&self, other: Rational, prec: u64) -> (Self, Ordering) {
+        self.agm_float_rational_prec_round_ref_val(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the specified precision and to the nearest value. Both the [`Float`] and the
+    /// [`Rational`] are taken by reference. An [`Ordering`] is also returned, indicating whether
+    /// the rounded AGM is less than, equal to, or greater than the exact AGM. Although `NaN`s are
+    /// not comparable to any [`Float`], whenever this function returns a `NaN` it also returns
+    /// `Equal`.
+    ///
+    /// If the AGM is equidistant from two [`Float`]s with the specified precision, the [`Float`]
+    /// with fewer 1s in its binary expansion is chosen. See [`RoundingMode`] for a description of
+    /// the `Nearest` rounding mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_prec_ref_ref(&self, other: &Rational, prec: u64) -> (Self, Ordering) {
+        self.agm_float_rational_prec_round_ref_ref(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the precision of the [`Float`] and with the specified rounding mode. Both the
+    /// [`Float`] and the [`Rational`] are taken by value. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// The output precision is the precision of `self`. See [`RoundingMode`] for a description of
+    /// the possible rounding modes.
+    ///
+    /// $$
+    /// f(x,y,p,m) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is not `Nearest`, then $|\varepsilon|
+    ///   < 2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p+1}$.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, and $m$ is `Nearest`, then $|\varepsilon| \leq
+    ///   2^{\lfloor\log_2 \text{AGM}(x,y)\rfloor-p}$.
+    ///
+    /// If the output has a precision, it is the precision of `self`.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},y,p,m)=f(-\infty,y,p,m)=\text{NaN}$
+    /// - $f(\infty,y,p,m)=\infty$ if $y>0$, and $\text{NaN}$ otherwise
+    /// - $f(\pm0.0,y,p,m)=0.0$
+    /// - $f(x,0,p,m)=0.0$ if $x$ is finite
+    /// - $f(x,y,p,m)=\text{NaN}$ if $x$ and $y$ are nonzero and $x<0$ or $y<0$
+    ///
+    /// Overflow and underflow:
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Ceiling`, `Up`, or `Nearest`, $\infty$ is
+    ///   returned instead.
+    /// - If $f(x,y,p,m)\geq 2^{2^{30}-1}$ and $m$ is `Floor` or `Down`, $(1-(1/2)^p)2^{2^{30}-1}$
+    ///   is returned instead.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Floor` or `Down`, $0.0$ is returned instead.
+    /// - If $0<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Ceiling` or `Up`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    /// - If $0<f(x,y,p,m)\leq2^{-2^{30}-1}$, and $m$ is `Nearest`, $0.0$ is returned instead.
+    /// - If $2^{-2^{30}-1}<f(x,y,p,m)<2^{-2^{30}}$, and $m$ is `Nearest`, $2^{-2^{30}}$ is returned
+    ///   instead.
+    ///
+    /// Since the result is never negative, negative overflow and underflow cannot occur.
+    ///
+    /// If you know you'll be using `Nearest`, consider using [`Agm::agm`] instead. If you want to
+    /// specify the output precision, consider using [`Float::agm_float_rational_prec_round`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result is not exact, which happens unless one argument is
+    /// zero or infinite or the two arguments are equal.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::rounding_modes::RoundingMode::*;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// // The output precision is the precision of the Float, here 2 bits.
+    /// let (agm, o) =
+    ///     Float::from(24).agm_float_rational_round(Rational::from_unsigneds(1u8, 3), Floor);
+    /// assert_eq!(agm.to_string(), "6.0");
+    /// assert_eq!(o, Less);
+    ///
+    /// let (agm, o) =
+    ///     Float::from(24).agm_float_rational_round(Rational::from_unsigneds(1u8, 3), Ceiling);
+    /// assert_eq!(agm.to_string(), "8.0");
+    /// assert_eq!(o, Greater);
+    /// ```
+    #[inline]
+    pub fn agm_float_rational_round(self, other: Rational, rm: RoundingMode) -> (Self, Ordering) {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the precision of the [`Float`] and with the specified rounding mode. The [`Float`]
+    /// is taken by value and the [`Rational`] by reference. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// The output precision is the precision of `self`. See [`RoundingMode`] for a description of
+    /// the possible rounding modes.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_round_val_ref(
+        self,
+        other: &Rational,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_val_ref(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the precision of the [`Float`] and with the specified rounding mode. The [`Float`]
+    /// is taken by reference and the [`Rational`] by value. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// The output precision is the precision of `self`. See [`RoundingMode`] for a description of
+    /// the possible rounding modes.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_round_ref_val(
+        &self,
+        other: Rational,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_ref_val(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], rounding the
+    /// result to the precision of the [`Float`] and with the specified rounding mode. Both the
+    /// [`Float`] and the [`Rational`] are taken by reference. An [`Ordering`] is also returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function returns a `NaN`
+    /// it also returns `Equal`.
+    ///
+    /// The output precision is the precision of `self`. See [`RoundingMode`] for a description of
+    /// the possible rounding modes.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    #[inline]
+    pub fn agm_float_rational_round_ref_ref(
+        &self,
+        other: &Rational,
+        rm: RoundingMode,
+    ) -> (Self, Ordering) {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_ref_ref(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by value. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(prec, self.significant_bits())`,
+    /// and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero, or if `rm` is `Exact` but the result is not exact.
+    #[allow(clippy::needless_pass_by_value)]
+    #[inline]
+    pub fn agm_float_rational_prec_round_assign(
+        &mut self,
+        other: Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> Ordering {
+        let (agm, o) = agm_float_rational_prec_round_ref_ref(self, &other, prec, rm);
+        *self = agm;
+        o
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by reference. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(prec, self.significant_bits())`,
+    /// and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero, or if `rm` is `Exact` but the result is not exact.
+    #[inline]
+    pub fn agm_float_rational_prec_round_assign_ref(
+        &mut self,
+        other: &Rational,
+        prec: u64,
+        rm: RoundingMode,
+    ) -> Ordering {
+        let (agm, o) = agm_float_rational_prec_round_ref_ref(self, other, prec, rm);
+        *self = agm;
+        o
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by value. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(prec, self.significant_bits())`,
+    /// and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero.
+    #[inline]
+    pub fn agm_float_rational_prec_assign(&mut self, other: Rational, prec: u64) -> Ordering {
+        self.agm_float_rational_prec_round_assign(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by reference. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(prec, self.significant_bits())`,
+    /// and $m$ is `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `prec` is zero.
+    #[inline]
+    pub fn agm_float_rational_prec_assign_ref(&mut self, other: &Rational, prec: u64) -> Ordering {
+        self.agm_float_rational_prec_round_assign_ref(other, prec, Nearest)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by value. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result is not exact.
+    #[inline]
+    pub fn agm_float_rational_round_assign(
+        &mut self,
+        other: Rational,
+        rm: RoundingMode,
+    ) -> Ordering {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_assign(other, prec, rm)
+    }
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by reference. An [`Ordering`] is returned,
+    /// indicating whether the rounded AGM is less than, equal to, or greater than the exact AGM.
+    /// Although `NaN`s are not comparable to any [`Float`], whenever this function sets the
+    /// [`Float`] to `NaN` it also returns `Equal`.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Panics
+    /// Panics if `rm` is `Exact` but the result is not exact.
+    #[inline]
+    pub fn agm_float_rational_round_assign_ref(
+        &mut self,
+        other: &Rational,
+        rm: RoundingMode,
+    ) -> Ordering {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_assign_ref(other, prec, rm)
+    }
+}
+
+impl Agm<Self> for Float {
+    type Output = Self;
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, taking both by value.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs. If the agm
+    /// is equidistant from two [`Float`]s with the specified precision, the [`Float`] with fewer 1s
+    /// in its binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest`
+    /// rounding mode.
+    ///
+    /// $$
+    /// f(x,y) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x)=f(x,\text{NaN})=f(-\infty,x)=f(x,-\infty)=\text{NaN}$
+    /// - $f(\infty,x)=f(x,\infty)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x)=f(x,\pm0.0)=0.0$
+    /// - $f(x,y)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using [`Float::agm_prec`]
+    /// instead. If you want to specify the output precision, consider using [`Float::agm_round`].
+    /// If you want both of these things, consider using [`Float::agm_prec_round`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    ///
+    /// assert_eq!(
+    ///     Float::from_unsigned_prec(24u8, 100)
+    ///         .0
+    ///         .agm(Float::from(6))
+    ///         .to_string(),
+    ///     "13.458171481725615420766813156976"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: Self) -> Self {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round(other, prec, Nearest).0
+    }
+}
+
+impl Agm<&Self> for Float {
+    type Output = Self;
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, taking the first by value
+    /// and the second by reference.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs. If the agm
+    /// is equidistant from two [`Float`]s with the specified precision, the [`Float`] with fewer 1s
+    /// in its binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest`
+    /// rounding mode.
+    ///
+    /// $$
+    /// f(x,y) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x)=f(x,\text{NaN})=f(-\infty,x)=f(x,-\infty)=\text{NaN}$
+    /// - $f(\infty,x)=f(x,\infty)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x)=f(x,\pm0.0)=0.0$
+    /// - $f(x,y)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_val_ref`] instead. If you want to specify the output precision, consider
+    /// using [`Float::agm_round_val_ref`]. If you want both of these things, consider using
+    /// [`Float::agm_prec_round_val_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`, and $m$ is `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    ///
+    /// assert_eq!(
+    ///     Float::from_unsigned_prec(24u8, 100)
+    ///         .0
+    ///         .agm(&Float::from(6))
+    ///         .to_string(),
+    ///     "13.458171481725615420766813156976"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: &Self) -> Self {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_val_ref(other, prec, Nearest).0
+    }
+}
+
+impl Agm<Float> for &Float {
+    type Output = Float;
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, taking the first by
+    /// reference and the second by value.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs. If the agm
+    /// is equidistant from two [`Float`]s with the specified precision, the [`Float`] with fewer 1s
+    /// in its binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest`
+    /// rounding mode.
+    ///
+    /// $$
+    /// f(x,y) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x)=f(x,\text{NaN})=f(-\infty,x)=f(x,-\infty)=\text{NaN}$
+    /// - $f(\infty,x)=f(x,\infty)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x)=f(x,\pm0.0)=0.0$
+    /// - $f(x,y)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_ref_val`] instead. If you want to specify the output precision, consider
+    /// using [`Float::agm_round_ref_val`]. If you want both of these things, consider using
+    /// [`Float::agm_prec_round_ref_val`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`, and $m$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    ///
+    /// assert_eq!(
+    ///     (&Float::from_unsigned_prec(24u8, 100).0)
+    ///         .agm(Float::from(6))
+    ///         .to_string(),
+    ///     "13.458171481725615420766813156976"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: Float) -> Float {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_ref_val(other, prec, Nearest).0
+    }
+}
+
+impl Agm<&Float> for &Float {
+    type Output = Float;
+
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, taking both by reference.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs. If the agm
+    /// is equidistant from two [`Float`]s with the specified precision, the [`Float`] with fewer 1s
+    /// in its binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest`
+    /// rounding mode.
+    ///
+    /// $$
+    /// f(x,y) = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// Special cases:
+    /// - $f(\text{NaN},x)=f(x,\text{NaN})=f(-\infty,x)=f(x,-\infty)=\text{NaN}$
+    /// - $f(\infty,x)=f(x,\infty)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+    /// - $f(\pm0.0,x)=f(x,\pm0.0)=0.0$
+    /// - $f(x,y)=\text{NaN}$ if $x<0$ or $y<0$
+    ///
+    /// Neither overflow nor underflow is possible.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_ref_ref`] instead. If you want to specify the output precision, consider
+    /// using [`Float::agm_round_ref_ref`]. If you want both of these things, consider using
+    /// [`Float::agm_prec_round_ref_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    ///
+    /// assert_eq!(
+    ///     (&Float::from_unsigned_prec(24u8, 100).0)
+    ///         .agm(&Float::from(6))
+    ///         .to_string(),
+    ///     "13.458171481725615420766813156976"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: &Float) -> Float {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_ref_ref(other, prec, Nearest).0
+    }
+}
+
+impl AgmAssign<Self> for Float {
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and taking the [`Float`] on the right-hand side by value.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs. If the agm
+    /// is equidistant from two [`Float`]s with the specified precision, the [`Float`] with fewer 1s
+    /// in its binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest`
+    /// rounding mode.
+    ///
+    /// $$
+    /// x\gets = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// See the [`Float::agm`] documentation for information on special cases, overflow, and
+    /// underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_assign`] instead. If you want to specify the output precision, consider
+    /// using [`Float::agm_round_assign`]. If you want both of these things, consider using
+    /// [`Float::agm_prec_round_assign`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::AgmAssign;
+    /// use mithqalite_float::Float;
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// x.agm_assign(Float::from(6));
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156976");
+    /// ```
+    #[inline]
+    fn agm_assign(&mut self, other: Self) {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_assign(other, prec, Nearest);
+    }
+}
+
+impl AgmAssign<&Self> for Float {
+    /// Computes the arithmetic-geometric mean (AGM) of two [`Float`]s, mutating the first one in
+    /// place, and taking the [`Float`] on the right-hand side by reference.
+    ///
+    /// If the output has a precision, it is the maximum of the precisions of the inputs. If the agm
+    /// is equidistant from two [`Float`]s with the specified precision, the [`Float`] with fewer 1s
+    /// in its binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest`
+    /// rounding mode.
+    ///
+    /// $$
+    /// x\gets = \text{AGM}(x,y)+\varepsilon
+    /// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+    /// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+    /// $$
+    /// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed
+    ///   to be 0.
+    /// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+    ///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is the maximum precision of the inputs.
+    ///
+    /// See the [`Float::agm`] documentation for information on special cases, overflow, and
+    /// underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_prec_assign_ref`] instead. If you want to specify the output precision,
+    /// consider using [`Float::agm_round_assign_ref`]. If you want both of these things, consider
+    /// using [`Float::agm_prec_round_assign_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n (\log n)^2 \log\log n)$
+    ///
+    /// $M(n) = O(m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`, and $m$ is `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::AgmAssign;
+    /// use mithqalite_float::Float;
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// x.agm_assign(&Float::from(6));
+    /// assert_eq!(x.to_string(), "13.458171481725615420766813156976");
+    /// ```
+    #[inline]
+    fn agm_assign(&mut self, other: &Self) {
+        let prec = max(self.significant_bits(), other.significant_bits());
+        self.agm_prec_round_assign_ref(other, prec, Nearest);
+    }
+}
+
+impl Agm<Rational> for Float {
+    type Output = Self;
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], taking both
+    /// by value.
+    ///
+    /// If the output has a precision, it is the precision of the [`Float`]. If the AGM is
+    /// equidistant from two [`Float`]s with that precision, the [`Float`] with fewer 1s in its
+    /// binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest` rounding
+    /// mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_round`] instead. If you want to specify the output precision,
+    /// consider using [`Float::agm_float_rational_prec`]. If you want both of these things,
+    /// consider using [`Float::agm_float_rational_prec_round`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    ///
+    /// assert_eq!(
+    ///     Float::from_unsigned_prec(24u8, 100)
+    ///         .0
+    ///         .agm(Rational::from_unsigneds(1u8, 3))
+    ///         .to_string(),
+    ///     "6.6568740624918905960055565225339"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: Rational) -> Self {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round(other, prec, Nearest).0
+    }
+}
+
+impl Agm<&Rational> for Float {
+    type Output = Self;
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], taking the
+    /// [`Float`] by value and the [`Rational`] by reference.
+    ///
+    /// If the output has a precision, it is the precision of the [`Float`]. If the AGM is
+    /// equidistant from two [`Float`]s with that precision, the [`Float`] with fewer 1s in its
+    /// binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest` rounding
+    /// mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_round_val_ref`] instead. If you want to specify the output
+    /// precision, consider using [`Float::agm_float_rational_prec_val_ref`]. If you want both of
+    /// these things, consider using [`Float::agm_float_rational_prec_round_val_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    ///
+    /// assert_eq!(
+    ///     Float::from_unsigned_prec(24u8, 100)
+    ///         .0
+    ///         .agm(&Rational::from_unsigneds(1u8, 3))
+    ///         .to_string(),
+    ///     "6.6568740624918905960055565225339"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: &Rational) -> Self {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_val_ref(other, prec, Nearest)
+            .0
+    }
+}
+
+impl Agm<Rational> for &Float {
+    type Output = Float;
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], taking the
+    /// [`Float`] by reference and the [`Rational`] by value.
+    ///
+    /// If the output has a precision, it is the precision of the [`Float`]. If the AGM is
+    /// equidistant from two [`Float`]s with that precision, the [`Float`] with fewer 1s in its
+    /// binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest` rounding
+    /// mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_round_ref_val`] instead. If you want to specify the output
+    /// precision, consider using [`Float::agm_float_rational_prec_ref_val`]. If you want both of
+    /// these things, consider using [`Float::agm_float_rational_prec_round_ref_val`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    ///
+    /// assert_eq!(
+    ///     (&Float::from_unsigned_prec(24u8, 100).0)
+    ///         .agm(Rational::from_unsigneds(1u8, 3))
+    ///         .to_string(),
+    ///     "6.6568740624918905960055565225339"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: Rational) -> Float {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_ref_val(other, prec, Nearest)
+            .0
+    }
+}
+
+impl Agm<&Rational> for &Float {
+    type Output = Float;
+
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], taking both
+    /// by reference.
+    ///
+    /// If the output has a precision, it is the precision of the [`Float`]. If the AGM is
+    /// equidistant from two [`Float`]s with that precision, the [`Float`] with fewer 1s in its
+    /// binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest` rounding
+    /// mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_round_ref_ref`] instead. If you want to specify the output
+    /// precision, consider using [`Float::agm_float_rational_prec_ref_ref`]. If you want both of
+    /// these things, consider using [`Float::agm_float_rational_prec_round_ref_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::Agm;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    ///
+    /// assert_eq!(
+    ///     (&Float::from_unsigned_prec(24u8, 100).0)
+    ///         .agm(&Rational::from_unsigneds(1u8, 3))
+    ///         .to_string(),
+    ///     "6.6568740624918905960055565225339"
+    /// );
+    /// ```
+    #[inline]
+    fn agm(self, other: &Rational) -> Float {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_round_ref_ref(other, prec, Nearest)
+            .0
+    }
+}
+
+impl AgmAssign<Rational> for Float {
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by value.
+    ///
+    /// If the output has a precision, it is the precision of the [`Float`]. If the AGM is
+    /// equidistant from two [`Float`]s with that precision, the [`Float`] with fewer 1s in its
+    /// binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest` rounding
+    /// mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_round_assign`] instead. If you want to specify the output
+    /// precision, consider using [`Float::agm_float_rational_prec_assign`]. If you want both of
+    /// these things, consider using [`Float::agm_float_rational_prec_round_assign`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::AgmAssign;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// x.agm_assign(Rational::from_unsigneds(1u8, 3));
+    /// assert_eq!(x.to_string(), "6.6568740624918905960055565225339");
+    /// ```
+    #[inline]
+    fn agm_assign(&mut self, other: Rational) {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_assign(other, prec);
+    }
+}
+
+impl AgmAssign<&Rational> for Float {
+    /// Computes the arithmetic-geometric mean (AGM) of a [`Float`] and a [`Rational`], mutating the
+    /// [`Float`] in place and taking the [`Rational`] by reference.
+    ///
+    /// If the output has a precision, it is the precision of the [`Float`]. If the AGM is
+    /// equidistant from two [`Float`]s with that precision, the [`Float`] with fewer 1s in its
+    /// binary expansion is chosen. See [`RoundingMode`] for a description of the `Nearest` rounding
+    /// mode.
+    ///
+    /// See the [`Float::agm_float_rational_prec_round`] documentation for information on special
+    /// cases, overflow, and underflow.
+    ///
+    /// If you want to use a rounding mode other than `Nearest`, consider using
+    /// [`Float::agm_float_rational_round_assign_ref`] instead. If you want to specify the output
+    /// precision, consider using [`Float::agm_float_rational_prec_assign_ref`]. If you want both of
+    /// these things, consider using [`Float::agm_float_rational_prec_round_assign_ref`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n, m) = O(n (\log n)^2 \log\log n + m)$
+    ///
+    /// $M(n, m) = O(n \log n + m)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, $n$ is `self.significant_bits()`, and $m$ is
+    /// `other.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::elliptic::traits::AgmAssign;
+    /// use mithqalite_float::Float;
+    /// use mithqalite_q::Rational;
+    ///
+    /// let mut x = Float::from_unsigned_prec(24u8, 100).0;
+    /// x.agm_assign(&Rational::from_unsigneds(1u8, 3));
+    /// assert_eq!(x.to_string(), "6.6568740624918905960055565225339");
+    /// ```
+    #[inline]
+    fn agm_assign(&mut self, other: &Rational) {
+        let prec = self.significant_bits();
+        self.agm_float_rational_prec_assign_ref(other, prec);
+    }
+}
+
+/// Computes the arithmetic-geometric mean (AGM) of two primitive floats.
+///
+/// $$
+/// f(x,y) = \text{AGM}(x,y)+\varepsilon
+/// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+/// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+/// $$
+/// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to
+///   be 0.
+/// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is precision of the output (typically 24 if `T` is a
+///   [`f32`] and 53 if `T` is a [`f64`], but less if the output is subnormal).
+///
+/// Special cases:
+/// - $f(\text{NaN},x)=f(x,\text{NaN})=f(-\infty,x)=f(x,-\infty)=\text{NaN}$
+/// - $f(\infty,x)=f(x,\infty)=\infty$ if $x>0$, and $\text{NaN}$ if $x\leq 0$
+/// - $f(\pm0.0,x)=f(x,\pm0.0)=0.0$
+/// - $f(x,y)=\text{NaN}$ if $x<0$ or $y<0$
+///
+/// # Worst-case complexity
+/// Constant time and additional memory.
+///
+/// # Examples
+/// ```
+/// use mithqalite_base::num::float::NiceFloat;
+/// use mithqalite_float::float::elliptic::agm::primitive_float_agm;
+///
+/// assert_eq!(
+///     NiceFloat(primitive_float_agm(24.0, 6.0)),
+///     NiceFloat(13.458171481725616)
+/// );
+/// ```
+#[allow(clippy::type_repetition_in_bounds)]
+#[inline]
+pub fn primitive_float_agm<T: PrimitiveFloat>(x: T, y: T) -> T
+where
+    Float: From<T> + PartialOrd<T>,
+    for<'a> T: ExactFrom<&'a Float> + RoundingFrom<&'a Float>,
+{
+    emulate_float_float_to_float_fn(Float::agm_prec, x, y)
+}
+
+/// Computes the arithmetic-geometric mean (AGM) of two [`Rational`]s, returning the result as a
+/// primitive float.
+///
+/// $$
+/// f(x,y) = \text{AGM}(x,y)+\varepsilon
+/// =\frac{\pi}{2}\left(\int_0^{\frac{\pi}{2}}\frac{\mathrm{d}\theta}
+/// {\sqrt{x^2\cos^2\theta+y^2\sin^2\theta}}\right)^{-1}+\varepsilon.
+/// $$
+/// - If $\text{AGM}(x,y)$ is infinite, zero, or `NaN`, $\varepsilon$ may be ignored or assumed to
+///   be 0.
+/// - If $\text{AGM}(x,y)$ is finite and nonzero, then $|\varepsilon| < 2^{\lfloor\log_2
+///   \text{AGM}(x,y)\rfloor-p}$, where $p$ is precision of the output (typically 24 if `T` is a
+///   [`f32`] and 53 if `T` is a [`f64`], but less if the output is subnormal).
+///
+/// Special cases:
+/// - $f(0,x)=f(x,0)=0.0$
+/// - $f(x,y)=\text{NaN}$ if $x<0$ or $y<0$
+///
+/// # Worst-case complexity
+/// $T(m) = O(m)$
+///
+/// $M(m) = O(m)$
+///
+/// where $T$ is time, $M$ is additional memory, and $m$ is `max(x.significant_bits(),
+/// y.significant_bits())`.
+///
+/// # Examples
+/// ```
+/// use mithqalite_base::num::float::NiceFloat;
+/// use mithqalite_float::float::elliptic::agm::primitive_float_agm_rational;
+/// use mithqalite_q::Rational;
+///
+/// assert_eq!(
+///     NiceFloat(primitive_float_agm_rational::<f64>(
+///         &Rational::from_unsigneds(2u8, 3),
+///         &Rational::from_unsigneds(1u8, 5)
+///     )),
+///     NiceFloat(0.3985113702200345)
+/// );
+/// ```
+#[allow(clippy::type_repetition_in_bounds)]
+#[inline]
+pub fn primitive_float_agm_rational<T: PrimitiveFloat>(x: &Rational, y: &Rational) -> T
+where
+    Float: PartialOrd<T>,
+    for<'a> T: ExactFrom<&'a Float> + RoundingFrom<&'a Float>,
+{
+    emulate_rational_rational_to_float_fn(Float::agm_rational_prec_ref_ref, x, y)
+}

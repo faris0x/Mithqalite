@@ -1,0 +1,198 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::natural::Natural;
+use crate::natural::arithmetic::shr::limbs_slice_shr_in_place;
+use crate::platform::{LIMB_WIDTH_USIZE, Limb};
+use alloc::vec::Vec;
+use itertools::Itertools;
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::num::basic::traits::Zero;
+use mithqalite_base::num::conversion::traits::ExactFrom;
+use mithqalite_base::num::logic::traits::{BitAccess, BitConvertible, BitIterable};
+
+impl BitConvertible for Natural {
+    /// Returns a [`Vec`] containing the bits of a [`Natural`] in ascending order: least- to
+    /// most-significant.
+    ///
+    /// If the number is 0, the [`Vec`] is empty; otherwise, it ends with `true`.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::num::logic::traits::BitConvertible;
+    /// use mithqalite_nz::natural::Natural;
+    ///
+    /// assert!(Natural::ZERO.to_bits_asc().is_empty());
+    /// // 105 = 1101001b
+    /// assert_eq!(
+    ///     Natural::from(105u32).to_bits_asc(),
+    ///     &[true, false, false, true, false, true, true]
+    /// );
+    /// ```
+    fn to_bits_asc(&self) -> Vec<bool> {
+        let mut bits = Vec::new();
+        if *self == 0u32 {
+            return bits;
+        }
+        let limbs = self.limbs();
+        let last_index = usize::exact_from(self.limb_count()) - 1;
+        let last = limbs[last_index];
+        for limb in limbs.take(last_index) {
+            for i in 0..Limb::WIDTH {
+                bits.push(limb.get_bit(i));
+            }
+        }
+        bits.extend(last.bits());
+        bits
+    }
+
+    /// Returns a [`Vec`] containing the bits of a [`Natural`] in descending order: most- to
+    /// least-significant.
+    ///
+    /// If the number is 0, the [`Vec`] is empty; otherwise, it begins with `true`.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `self.significant_bits()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::basic::traits::Zero;
+    /// use mithqalite_base::num::logic::traits::BitConvertible;
+    /// use mithqalite_nz::natural::Natural;
+    ///
+    /// assert!(Natural::ZERO.to_bits_desc().is_empty());
+    /// // 105 = 1101001b
+    /// assert_eq!(
+    ///     Natural::from(105u32).to_bits_desc(),
+    ///     &[true, true, false, true, false, false, true]
+    /// );
+    /// ```
+    fn to_bits_desc(&self) -> Vec<bool> {
+        let mut bits = self.to_bits_asc();
+        bits.reverse();
+        bits
+    }
+
+    /// Converts an iterator of bits into a [`Natural`]. The bits should be in ascending order
+    /// (least- to most-significant).
+    ///
+    /// $$
+    /// f((b_i)_ {i=0}^{k-1}) = \sum_{i=0}^{k-1}2^i \[b_i\],
+    /// $$
+    /// where braces denote the Iverson bracket, which converts a bit to 0 or 1.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `xs.count()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::iter::empty;
+    /// use mithqalite_base::num::logic::traits::BitConvertible;
+    /// use mithqalite_nz::natural::Natural;
+    ///
+    /// assert_eq!(Natural::from_bits_asc(empty()), 0);
+    /// // 105 = 1101001b
+    /// assert_eq!(
+    ///     Natural::from_bits_asc(
+    ///         [true, false, false, true, false, true, true]
+    ///             .iter()
+    ///             .cloned()
+    ///     ),
+    ///     105
+    /// );
+    /// ```
+    #[inline]
+    fn from_bits_asc<I: Iterator<Item = bool>>(xs: I) -> Self {
+        Self::from_owned_limbs_asc(
+            xs.chunks(LIMB_WIDTH_USIZE)
+                .into_iter()
+                .map(Limb::from_bits_asc)
+                .collect(),
+        )
+    }
+
+    /// Converts an iterator of bits into a [`Natural`]. The bits should be in descending order
+    /// (most- to least-significant).
+    ///
+    /// $$
+    /// f((b_i)_ {i=0}^{k-1}) = \sum_{i=0}^{k-1}2^{k-i-1} \[b_i\],
+    /// $$
+    /// where braces denote the Iverson bracket, which converts a bit to 0 or 1.
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n)$
+    ///
+    /// $M(n) = O(n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `xs.count()`.
+    ///
+    /// # Examples
+    /// ```
+    /// use core::iter::empty;
+    /// use mithqalite_base::num::logic::traits::BitConvertible;
+    /// use mithqalite_nz::natural::Natural;
+    ///
+    /// assert_eq!(Natural::from_bits_desc(empty()), 0);
+    /// // 105 = 1101001b
+    /// assert_eq!(
+    ///     Natural::from_bits_desc(
+    ///         [true, true, false, true, false, false, true]
+    ///             .iter()
+    ///             .cloned()
+    ///     ),
+    ///     105
+    /// );
+    /// ```
+    fn from_bits_desc<I: Iterator<Item = bool>>(xs: I) -> Self {
+        let mut out = Vec::new();
+        let mut last_width = 0;
+        for chunk in &xs.chunks(LIMB_WIDTH_USIZE) {
+            let mut x = 0;
+            let mut i = 0;
+            for bit in chunk {
+                x <<= 1;
+                if bit {
+                    x |= 1;
+                }
+                i += 1;
+            }
+            last_width = i;
+            out.push(x);
+        }
+        match out.len() {
+            0 => Self::ZERO,
+            1 => Self::from(out[0]),
+            _ => {
+                out.reverse();
+                if last_width != Limb::WIDTH {
+                    let out_0 = out[0];
+                    out[0] = 0;
+                    limbs_slice_shr_in_place(&mut out, Limb::WIDTH - last_width);
+                    out[0] |= out_0;
+                }
+                Self::from_owned_limbs_asc(out)
+            }
+        }
+    }
+}

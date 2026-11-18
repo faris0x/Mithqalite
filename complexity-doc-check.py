@@ -20,7 +20,7 @@ import os
 import re
 import sys
 
-CRATES = ["malachite-base", "malachite-nz", "malachite-q", "malachite-float"]
+CRATES = ["mithqalite-base", "mithqalite-nz", "mithqalite-q", "mithqalite-float"]
 
 HEADERS = {
     "# Worst-case complexity",

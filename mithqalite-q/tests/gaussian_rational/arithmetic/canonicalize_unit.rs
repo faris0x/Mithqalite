@@ -1,0 +1,75 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::num::arithmetic::traits::{
+    CanonicalUnitIPow, CanonicalizeUnit, CanonicalizeUnitAssign, DivI, MulI,
+};
+use mithqalite_base::num::basic::traits::{One, Zero};
+use mithqalite_q::gaussian_rational::GaussianRational;
+use mithqalite_q::test_util::generators::gaussian_rational_gen;
+use std::str::FromStr;
+
+#[test]
+fn test_canonicalize_unit() {
+    let test = |s, out| {
+        let x = GaussianRational::from_str(s).unwrap();
+
+        let y = x.clone().canonicalize_unit();
+        assert!(y.real.is_valid());
+        assert!(y.imaginary.is_valid());
+        assert_eq!(y.to_string(), out);
+
+        let y = (&x).canonicalize_unit();
+        assert!(y.real.is_valid());
+        assert!(y.imaginary.is_valid());
+        assert_eq!(y.to_string(), out);
+
+        let mut y = x;
+        y.canonicalize_unit_assign();
+        assert_eq!(y.to_string(), out);
+    };
+    test("0", "0");
+    test("1", "1");
+    test("i", "1");
+    test("-1", "1");
+    test("-i", "1");
+    test("2+i", "1");
+    test("-1+2i", "1");
+    test("3+4i", "1");
+    test("-3", "1");
+    test("-3i", "1");
+}
+
+#[test]
+fn canonicalize_unit_properties() {
+    gaussian_rational_gen().test_properties(|x| {
+        let y = x.clone().canonicalize_unit();
+        assert!(y.real.is_valid());
+        assert!(y.imaginary.is_valid());
+        assert_eq!((&x).canonicalize_unit(), y);
+        let mut x_alt = x.clone();
+        x_alt.canonicalize_unit_assign();
+        assert_eq!(x_alt, y);
+
+        assert_eq!((&y).canonicalize_unit(), y);
+        assert_eq!(y.canonical_unit_i_pow(), 0);
+        // The Gaussian rationals form a field, so every nonzero value's canonical form is 1.
+        assert_eq!(
+            y,
+            if x == 0u32 {
+                GaussianRational::ZERO
+            } else {
+                GaussianRational::ONE
+            }
+        );
+        // All associates canonicalize to the same value, including the powers of i.
+        assert_eq!((&x).mul_i().canonicalize_unit(), y);
+        assert_eq!((-&x).canonicalize_unit(), y);
+        assert_eq!((&x).div_i().canonicalize_unit(), y);
+    });
+}

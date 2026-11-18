@@ -1,0 +1,25 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::test_util::runner::Runner;
+
+pub(crate) fn register(runner: &mut Runner) {
+    classification::register(runner);
+    complexity::register(runner);
+    constants::register(runner);
+    get_and_set::register(runner);
+    overflow_and_underflow::register(runner);
+    ulp::register(runner);
+}
+
+mod classification;
+mod complexity;
+mod constants;
+mod get_and_set;
+mod overflow_and_underflow;
+mod ulp;

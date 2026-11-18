@@ -1,0 +1,20 @@
+[package]
+name = "mithqalite-criterion-bench"
+version = "0.14.0"
+authors = ["Mikhail Hogrefe <mikhailhogrefe@gmail.com>"]
+autobenches = false
+rust-version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mithqalite-base = { version = "0.14.0", path = "../mithqalite-base" }
+mithqalite-nz = { version = "0.14.0", default-features = false, path = "../mithqalite-nz" }
+num = "0.4.3"
+rug = { version = "1.30.0", default-features = false, features = ["integer", "serde"] }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "natural_mul"
+harness = false

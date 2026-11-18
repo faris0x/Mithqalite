@@ -1,19 +1,19 @@
 [workspace]
-members = ['malachite', 'malachite-base', 'malachite-bigint', 'malachite-float', 'malachite-nz', 'malachite-q', 'malachite-criterion-bench']
+members = ['mithqalite', 'mithqalite-base', 'mithqalite-bigint', 'mithqalite-float', 'mithqalite-nz', 'mithqalite-q', 'mithqalite-criterion-bench']
 resolver = "2"
 
 [workspace.metadata.dylint]
-libraries = [{ path = "malachite-lints" }]
+libraries = [{ path = "mithqalite-lints" }]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.90.0"
 
 [workspace.dependencies]
-malachite-base = { version = "0.14.0", path = 'malachite-base', default-features = false }
-malachite-nz = { version = "0.14.0", path = 'malachite-nz', default-features = false }
-malachite-q = { version = "0.14.0", path = 'malachite-q', default-features = false }
-malachite-float = { version = "0.14.0", path = 'malachite-float', default-features = false }
+mithqalite-base = { version = "0.14.0", path = 'mithqalite-base', default-features = false }
+mithqalite-nz = { version = "0.14.0", path = 'mithqalite-nz', default-features = false }
+mithqalite-q = { version = "0.14.0", path = 'mithqalite-q', default-features = false }
+mithqalite-float = { version = "0.14.0", path = 'mithqalite-float', default-features = false }
 
 [profile.release]
 lto = "fat"

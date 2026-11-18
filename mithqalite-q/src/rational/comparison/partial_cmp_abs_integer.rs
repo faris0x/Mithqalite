@@ -1,0 +1,118 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::Rational;
+use core::cmp::Ordering::{self, *};
+use mithqalite_base::num::arithmetic::traits::Sign;
+use mithqalite_base::num::comparison::traits::PartialOrdAbs;
+use mithqalite_base::num::conversion::traits::ExactFrom;
+use mithqalite_base::num::logic::traits::SignificantBits;
+use mithqalite_nz::integer::Integer;
+
+impl PartialOrdAbs<Integer> for Rational {
+    /// Compares the absolute values of a [`Rational`] and an [`Integer`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::comparison::traits::PartialOrdAbs;
+    /// use mithqalite_nz::integer::Integer;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// assert_eq!(
+    ///     Rational::from_signeds(22, 7).partial_cmp_abs(&Integer::from(3)),
+    ///     Some(Greater)
+    /// );
+    /// assert_eq!(
+    ///     Rational::from_signeds(-22, 7).partial_cmp_abs(&Integer::from(-3)),
+    ///     Some(Greater)
+    /// );
+    /// ```
+    // The screens of `cmp_product` have already been applied above, so the final
+    // cross-multiplication is formed directly.
+    #[cfg_attr(dylint_lib = "mithqalite_lints", allow(use_cmp_product))]
+    fn partial_cmp_abs(&self, other: &Integer) -> Option<Ordering> {
+        // First check whether either value is zero
+        let self_sign = self.numerator_ref().sign();
+        let other_sign = other.unsigned_abs_ref().sign();
+        let sign_cmp = self_sign.cmp(&other_sign);
+        if sign_cmp != Equal || self_sign == Equal {
+            return Some(sign_cmp);
+        }
+        // Then check if one is < 1 and the other is > 1
+        let self_cmp_one = self.numerator.cmp(&self.denominator);
+        let other_cmp_one = other.unsigned_abs_ref().partial_cmp(&1u32).unwrap();
+        let one_cmp = self_cmp_one.cmp(&other_cmp_one);
+        if one_cmp != Equal {
+            return Some(one_cmp);
+        }
+        // Then compare numerators and denominators
+        let n_cmp = self.numerator.cmp(other.unsigned_abs_ref());
+        let d_cmp = self.denominator.partial_cmp(&1u32).unwrap();
+        if n_cmp == Equal && d_cmp == Equal {
+            return Some(Equal);
+        }
+        let nd_cmp = n_cmp.cmp(&d_cmp);
+        if nd_cmp != Equal {
+            return Some(nd_cmp);
+        }
+        // Then compare floor ∘ log_2 ∘ abs
+        let log_cmp = self
+            .floor_log_base_2_abs()
+            .cmp(&i64::exact_from(other.significant_bits() - 1));
+        if log_cmp != Equal {
+            return Some(log_cmp);
+        }
+        // Finally, cross-multiply.
+        Some(
+            self.numerator
+                .cmp(&(&self.denominator * other.unsigned_abs_ref())),
+        )
+    }
+}
+
+impl PartialOrdAbs<Rational> for Integer {
+    /// Compares the absolute values of an [`Integer`] and a [`Rational`].
+    ///
+    /// # Worst-case complexity
+    /// $T(n) = O(n \log n \log\log n)$
+    ///
+    /// $M(n) = O(n \log n)$
+    ///
+    /// where $T$ is time, $M$ is additional memory, and $n$ is `max(self.significant_bits(),
+    /// other.significant_bits())`.
+    ///
+    /// # Examples
+    /// ```
+    /// use mithqalite_base::num::comparison::traits::PartialOrdAbs;
+    /// use mithqalite_nz::integer::Integer;
+    /// use mithqalite_q::Rational;
+    /// use std::cmp::Ordering::*;
+    ///
+    /// assert_eq!(
+    ///     Integer::from(3).partial_cmp_abs(&Rational::from_signeds(22, 7)),
+    ///     Some(Less)
+    /// );
+    /// assert_eq!(
+    ///     Integer::from(-3).partial_cmp_abs(&Rational::from_signeds(-22, 7)),
+    ///     Some(Less)
+    /// );
+    /// ```
+    #[inline]
+    fn partial_cmp_abs(&self, other: &Rational) -> Option<Ordering> {
+        other.partial_cmp_abs(self).map(Ordering::reverse)
+    }
+}

@@ -4,156 +4,156 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "malachite-base: check",
+            "label": "mithqalite-base: check",
             "type": "shell",
             "command": "cargo check --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base"
+                "cwd": "${workspaceFolder}/mithqalite-base"
             }
         },
         {
-            "label": "malachite-base: clippy",
+            "label": "mithqalite-base: clippy",
             "type": "shell",
             "command": "cargo clippy --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base"
+                "cwd": "${workspaceFolder}/mithqalite-base"
             }
         },
         {
-            "label": "malachite-base: fmt",
+            "label": "mithqalite-base: fmt",
             "type": "shell",
             "command": "cargo fmt",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base"
+                "cwd": "${workspaceFolder}/mithqalite-base"
             }
         },
         {
-            "label": "malachite-base: doc",
+            "label": "mithqalite-base: doc",
             "type": "shell",
             "command": "cargo doc --no-deps",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base",
+                "cwd": "${workspaceFolder}/mithqalite-base",
                 "env": {
                     "RUSTDOCFLAGS": "--html-in-header katex-header.html"
                 }
             }
         },
         {
-            "label": "malachite-base: open docs",
+            "label": "mithqalite-base: open docs",
             "type": "shell",
-            "command": "open target/doc/malachite_base/index.html",
+            "command": "open target/doc/mithqalite_base/index.html",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base",
+                "cwd": "${workspaceFolder}/mithqalite-base",
             }
         },
 
         {
-            "label": "malachite-base-test-util: check",
+            "label": "mithqalite-base-test-util: check",
             "type": "shell",
             "command": "cargo check --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base-test-util"
+                "cwd": "${workspaceFolder}/mithqalite-base-test-util"
             }
         },
         {
-            "label": "malachite-base-test-util: clippy",
+            "label": "mithqalite-base-test-util: clippy",
             "type": "shell",
             "command": "cargo clippy --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base-test-util"
+                "cwd": "${workspaceFolder}/mithqalite-base-test-util"
             }
         },
         {
-            "label": "malachite-base-test-util: fmt",
+            "label": "mithqalite-base-test-util: fmt",
             "type": "shell",
             "command": "cargo fmt",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-base-test-util"
+                "cwd": "${workspaceFolder}/mithqalite-base-test-util"
             }
         },
 
         {
-            "label": "malachite-nz 32: check",
+            "label": "mithqalite-nz 32: check",
             "type": "shell",
             "command": "cargo check --all-targets --features 32_bit_limbs",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz"
+                "cwd": "${workspaceFolder}/mithqalite-nz"
             }
         },
         {
-            "label": "malachite-nz 32: clippy",
+            "label": "mithqalite-nz 32: clippy",
             "type": "shell",
             "command": "cargo clippy --all-targets --features 32_bit_limbs",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz"
+                "cwd": "${workspaceFolder}/mithqalite-nz"
             }
         },
         {
-            "label": "malachite-nz 64: check",
+            "label": "mithqalite-nz 64: check",
             "type": "shell",
             "command": "cargo check --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz"
+                "cwd": "${workspaceFolder}/mithqalite-nz"
             }
         },
         {
-            "label": "malachite-nz 64: clippy",
+            "label": "mithqalite-nz 64: clippy",
             "type": "shell",
             "command": "cargo clippy --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz"
+                "cwd": "${workspaceFolder}/mithqalite-nz"
             }
         },
         {
-            "label": "malachite-nz: fmt",
+            "label": "mithqalite-nz: fmt",
             "type": "shell",
             "command": "cargo fmt",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz"
+                "cwd": "${workspaceFolder}/mithqalite-nz"
             }
         },
         {
-            "label": "malachite-nz: doc",
+            "label": "mithqalite-nz: doc",
             "type": "shell",
             "command": "cargo doc --no-deps",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz",
+                "cwd": "${workspaceFolder}/mithqalite-nz",
                 "env": {
                     "RUSTDOCFLAGS": "--html-in-header katex-header.html"
                 }
             }
         },
         {
-            "label": "malachite-nz: open docs",
+            "label": "mithqalite-nz: open docs",
             "type": "shell",
-            "command": "open target/doc/malachite_nz/index.html",
+            "command": "open target/doc/mithqalite_nz/index.html",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz",
+                "cwd": "${workspaceFolder}/mithqalite-nz",
             }
         },
 
         {
-            "label": "malachite-nz-test-util: check",
+            "label": "mithqalite-nz-test-util: check",
             "type": "shell",
             "command": "cargo check --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz-test-util"
+                "cwd": "${workspaceFolder}/mithqalite-nz-test-util"
             }
         },
         {
-            "label": "malachite-nz-test-util: clippy",
+            "label": "mithqalite-nz-test-util: clippy",
             "type": "shell",
             "command": "cargo clippy --all-targets",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz-test-util"
+                "cwd": "${workspaceFolder}/mithqalite-nz-test-util"
             }
         },
         {
-            "label": "malachite-nz-test-util: fmt",
+            "label": "mithqalite-nz-test-util: fmt",
             "type": "shell",
             "command": "cargo fmt",
             "options": {
-                "cwd": "${workspaceFolder}/malachite-nz-test-util"
+                "cwd": "${workspaceFolder}/mithqalite-nz-test-util"
             }
         },
     ]

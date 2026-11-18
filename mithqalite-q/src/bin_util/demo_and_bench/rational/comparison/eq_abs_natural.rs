@@ -1,0 +1,87 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::num::arithmetic::traits::Abs;
+use mithqalite_base::num::comparison::traits::EqAbs;
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_q::test_util::bench::bucketers::rational_natural_max_bit_bucketer;
+use mithqalite_q::test_util::generators::rational_natural_pair_gen;
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_rational_eq_abs_natural);
+    register_demo!(runner, demo_natural_eq_abs_rational);
+
+    register_bench!(runner, benchmark_rational_eq_abs_natural_algorithms);
+    register_bench!(runner, benchmark_natural_eq_abs_rational_algorithms);
+}
+
+fn demo_rational_eq_abs_natural(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, y) in rational_natural_pair_gen().get(gm, config).take(limit) {
+        if x.eq_abs(&y) {
+            println!("|{x}| = |{y}|");
+        } else {
+            println!("|{x}| ≠ |{y}|");
+        }
+    }
+}
+
+fn demo_natural_eq_abs_rational(gm: GenMode, config: &GenConfig, limit: usize) {
+    for (x, y) in rational_natural_pair_gen().get(gm, config).take(limit) {
+        if y.eq_abs(&x) {
+            println!("|{y}| = |{x}|");
+        } else {
+            println!("|{y}| ≠ |{x}|");
+        }
+    }
+}
+
+#[allow(unused_must_use)]
+fn benchmark_rational_eq_abs_natural_algorithms(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Rational.eq_abs(&Natural)",
+        BenchmarkType::Algorithms,
+        rational_natural_pair_gen().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &rational_natural_max_bit_bucketer("x", "y"),
+        &mut [
+            ("default", &mut |(x, y)| no_out!(x.eq_abs(&y))),
+            ("using abs", &mut |(x, y)| no_out!(x.abs() == y)),
+        ],
+    );
+}
+
+#[allow(unused_must_use)]
+fn benchmark_natural_eq_abs_rational_algorithms(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "Natural.eq_abs(&Rational)",
+        BenchmarkType::Algorithms,
+        rational_natural_pair_gen().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &rational_natural_max_bit_bucketer("x", "y"),
+        &mut [
+            ("default", &mut |(x, y)| no_out!(y.eq_abs(&x))),
+            ("using abs", &mut |(x, y)| no_out!(y == x.abs())),
+        ],
+    );
+}

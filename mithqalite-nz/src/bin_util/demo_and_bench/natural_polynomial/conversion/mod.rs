@@ -1,0 +1,25 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use mithqalite_base::test_util::runner::Runner;
+
+pub(crate) fn register(runner: &mut Runner) {
+    from_coefficients_asc::register(runner);
+    from_natural::register(runner);
+    from_unsigned_polynomial::register(runner);
+    serde::register(runner);
+    string::register(runner);
+    unsigned_polynomial_from_natural_polynomial::register(runner);
+}
+
+mod from_coefficients_asc;
+mod from_natural;
+mod from_unsigned_polynomial;
+mod serde;
+mod string;
+mod unsigned_polynomial_from_natural_polynomial;

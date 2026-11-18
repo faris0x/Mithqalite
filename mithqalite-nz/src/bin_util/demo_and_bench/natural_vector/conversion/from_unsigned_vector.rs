@@ -1,0 +1,63 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+use mithqalite_base::test_util::bench::bucketers::unsigned_vector_dimension_bucketer;
+use mithqalite_base::test_util::bench::{BenchmarkType, run_benchmark};
+use mithqalite_base::test_util::generators::common::{GenConfig, GenMode};
+use mithqalite_base::test_util::generators::unsigned_vector_gen;
+use mithqalite_base::test_util::runner::Runner;
+use mithqalite_nz::natural_vector::NaturalVector;
+
+pub(crate) fn register(runner: &mut Runner) {
+    register_demo!(runner, demo_natural_vector_from_unsigned_vector);
+    register_demo!(runner, demo_natural_vector_from_unsigned_vector_ref);
+    register_bench!(
+        runner,
+        benchmark_natural_vector_from_unsigned_vector_evaluation_strategy
+    );
+}
+
+fn demo_natural_vector_from_unsigned_vector(gm: GenMode, config: &GenConfig, limit: usize) {
+    for v in unsigned_vector_gen().get(gm, config).take(limit) {
+        println!(
+            "NaturalVector::from({}) = {}",
+            v.clone(),
+            NaturalVector::from(v)
+        );
+    }
+}
+
+fn demo_natural_vector_from_unsigned_vector_ref(gm: GenMode, config: &GenConfig, limit: usize) {
+    for v in unsigned_vector_gen().get(gm, config).take(limit) {
+        println!("NaturalVector::from(&{}) = {}", v, NaturalVector::from(&v));
+    }
+}
+
+fn benchmark_natural_vector_from_unsigned_vector_evaluation_strategy(
+    gm: GenMode,
+    config: &GenConfig,
+    limit: usize,
+    file_name: &str,
+) {
+    run_benchmark(
+        "NaturalVector::from(UnsignedVector<u64>)",
+        BenchmarkType::EvaluationStrategy,
+        unsigned_vector_gen().get(gm, config),
+        gm.name(),
+        limit,
+        file_name,
+        &unsigned_vector_dimension_bucketer("v"),
+        &mut [
+            ("NaturalVector::from(UnsignedVector<u64>)", &mut |v| {
+                let _ = NaturalVector::from(v);
+            }),
+            ("NaturalVector::from(&UnsignedVector<u64>)", &mut |v| {
+                let _ = NaturalVector::from(&v);
+            }),
+        ],
+    );
+}

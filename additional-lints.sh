@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs the house Dylint lints (see malachite-lints/) over every crate, covering all targets. The
+# Runs the house Dylint lints (see mithqalite-lints/) over every crate, covering all targets. The
 # lints are deny-by-default, so any hit fails the run. Lint configuration, including the
 # long-lines exception list, lives in dylint.toml.
 set -e
@@ -31,7 +31,7 @@ export DYLINT_RUSTFLAGS="-D unfulfilled_lint_expectations"
 # Cargo's fingerprints include neither the lint library's code nor dylint.toml (both reach the
 # driver via environment variables), so changing them would not re-lint otherwise-unchanged
 # crates. Hash them and force a full re-lint when they change.
-LINT_HASH=$( (find malachite-lints/src malachite-lints/Cargo.toml dylint.toml -type f | sort | xargs shasum) | shasum | cut -d' ' -f1)
+LINT_HASH=$( (find mithqalite-lints/src mithqalite-lints/Cargo.toml dylint.toml -type f | sort | xargs shasum) | shasum | cut -d' ' -f1)
 STAMP=target/dylint/lint-sources.hash
 if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP")" != "$LINT_HASH" ]; then
     echo "The lints changed; forcing a full re-lint"
@@ -39,17 +39,17 @@ if [ ! -f "$STAMP" ] || [ "$(cat "$STAMP")" != "$LINT_HASH" ]; then
     mkdir -p target/dylint
     echo "$LINT_HASH" > "$STAMP"
 fi
-for crate in malachite-base malachite-nz malachite-q malachite-float; do
+for crate in mithqalite-base mithqalite-nz mithqalite-q mithqalite-float; do
     echo "Linting $crate"
     (cd $crate && cargo dylint --all -- --all-targets --features bin_build)
 done
-for crate in malachite malachite-bigint; do
+for crate in malachite mithqalite-bigint; do
     echo "Linting $crate"
     (cd $crate && cargo dylint --all -- --all-targets)
 done
 # The criterion-bench bench targets require features that `build.sh` never enables, so, like
 # `build.sh`, only check the default target.
-(cd malachite-criterion-bench && echo "Linting malachite-criterion-bench" && cargo dylint --all)
+(cd mithqalite-criterion-bench && echo "Linting mithqalite-criterion-bench" && cargo dylint --all)
 # Count the lines of Rust in the repo, like the old additional-lints.py did: every .rs file
 # outside target directories and editor history. (`cat | wc -l` rather than `wc -l` per file, so
 # xargs batching can't produce multiple totals.)

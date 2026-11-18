@@ -1,0 +1,394 @@
+// Copyright © 2026 Mikhail Hogrefe
+//
+// This file is part of Malachite.
+//
+// Malachite is free software: you can redistribute it and/or modify it under the terms of the GNU
+// Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
+// 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
+
+use crate::InnerFloat::{Finite, Infinity, NaN, Zero};
+use crate::{ComparableFloatRef, Float, significand_bits};
+use mithqalite_base::num::arithmetic::traits::{Abs, PowerOf2};
+use mithqalite_base::num::basic::floats::PrimitiveFloat;
+use mithqalite_base::num::basic::integers::PrimitiveInt;
+use mithqalite_base::num::basic::traits::{
+    Infinity as InfinityTrait, NaN as NaNTrait, NegativeInfinity, NegativeZero, Zero as ZeroTrait,
+};
+use mithqalite_base::num::conversion::traits::{ExactFrom, FromStringBase, RoundingFrom};
+use mithqalite_base::num::logic::traits::{BitAccess, SignificantBits};
+use mithqalite_base::rounding_modes::RoundingMode::{self, *};
+use mithqalite_nz::natural::Natural;
+use mithqalite_nz::platform::Limb;
+use mithqalite_q::Rational;
+use rug::float::{Round, Special};
+use std::cmp::Ordering;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+// Can't have From impl due to orphan rule. We could define an impl in mithqalite-base where
+// RoundingMode is defined, but pulling in rug::float just for that purpose seems overkill.
+pub const fn rounding_mode_from_rug_round(rm: Round) -> RoundingMode {
+    match rm {
+        Round::Nearest => Nearest,
+        Round::Zero => Down,
+        Round::Up => Ceiling,
+        Round::Down => Floor,
+        Round::AwayZero => Up,
+        _ => panic!(),
+    }
+}
+
+#[allow(clippy::result_unit_err)]
+pub const fn rug_round_try_from_rounding_mode(rm: RoundingMode) -> Result<Round, ()> {
+    match rm {
+        Floor => Ok(Round::Down),
+        Ceiling => Ok(Round::Up),
+        Down => Ok(Round::Zero),
+        Up => Ok(Round::AwayZero),
+        Nearest => Ok(Round::Nearest),
+        Exact => Err(()),
+    }
+}
+
+#[inline]
+pub fn rug_round_exact_from_rounding_mode(rm: RoundingMode) -> Round {
+    rug_round_try_from_rounding_mode(rm).unwrap()
+}
+
+impl From<&rug::Float> for Float {
+    fn from(x: &rug::Float) -> Self {
+        if x.is_nan() {
+            Self::NAN
+        } else if x.is_infinite() {
+            if x.is_sign_positive() {
+                Self::INFINITY
+            } else {
+                Self::NEGATIVE_INFINITY
+            }
+        } else if x.is_zero() {
+            if x.is_sign_positive() {
+                Self::ZERO
+            } else {
+                Self::NEGATIVE_ZERO
+            }
+        } else {
+            let mut significand = Natural::exact_from(&*x.get_significand().unwrap());
+            let precision = u64::from(x.prec());
+            if significand.significant_bits() - precision >= Limb::WIDTH {
+                // can only happen when 32_bit_limbs is set
+                significand >>= Limb::WIDTH;
+            }
+            let result = Self(Finite {
+                sign: x.is_sign_positive(),
+                exponent: x.get_exp().unwrap(),
+                precision,
+                significand,
+            });
+            assert!(result.is_valid());
+            result
+        }
+    }
+}
+
+fn convert_prec(prec: u64) -> Result<u32, ()> {
+    u32::try_from(prec).map_err(|_| ())
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn special_float(prec: u32, value: Special) -> Result<rug::Float, ()> {
+    Ok(rug::Float::with_val_round(prec, value, Round::Zero).0)
+}
+
+pub fn rug_float_significant_bits(x: &rug::Float) -> u64 {
+    if x.is_normal() {
+        u64::from(x.prec())
+    } else {
+        1
+    }
+}
+
+impl TryFrom<&Float> for rug::Float {
+    type Error = ();
+
+    fn try_from(x: &Float) -> Result<Self, ()> {
+        match x {
+            float_nan!() => special_float(1, Special::Nan),
+            float_infinity!() => special_float(1, Special::Infinity),
+            float_negative_infinity!() => special_float(1, Special::NegInfinity),
+            float_zero!() => special_float(1, Special::Zero),
+            float_negative_zero!() => special_float(1, Special::NegZero),
+            Float(Finite {
+                sign,
+                exponent,
+                precision,
+                significand,
+            }) => {
+                let bits = i64::exact_from(significand_bits(significand));
+                let e = i64::from(*exponent) - bits;
+                let prec = convert_prec(*precision)?;
+                let mut f = if bits < i64::from(Float::MAX_EXPONENT) && i32::try_from(-e).is_ok() {
+                    // The integer-valued intermediate stays within the exponent range.
+                    let mut f =
+                        Self::with_val_round(prec, rug::Integer::from(significand), Round::Zero).0;
+                    f >>= i32::try_from(-e).map_err(|_| ())?;
+                    f
+                } else {
+                    // A significand wider than the exponent range allows for an integer: go through
+                    // a rational, whose conversion checks the range only on the final value.
+                    let z = rug::Integer::from(significand);
+                    let q = if e >= 0 {
+                        rug::Rational::from(z << u32::try_from(e).map_err(|_| ())?)
+                    } else {
+                        rug::Rational::from((
+                            z,
+                            rug::Integer::from(1) << u32::try_from(-e).map_err(|_| ())?,
+                        ))
+                    };
+                    Self::with_val_round(prec, &q, Round::Zero).0
+                };
+                if !sign {
+                    f = -f;
+                }
+                Ok(f)
+            }
+        }
+    }
+}
+
+// Asserts that the `Ordering` returned alongside a rounded result is consistent with the rounding
+// mode: a directed mode can only err to one side, with `Down` and `Up` depending on the sign of the
+// result (which is the sign of the exact value, since zeros keep their sign), `Exact` never errs,
+// and `Nearest` may err either way. A `NaN` result is always reported as `Equal`.
+pub fn assert_rounding_ordering_consistent(x: &Float, rm: RoundingMode, o: Ordering) {
+    if x.is_nan() {
+        assert_eq!(o, Ordering::Equal);
+        return;
+    }
+    assert_rounding_ordering_consistent_for_sign(!x.is_sign_negative(), rm, o);
+}
+
+// The same check for a result that is not a `Float`, given whether the exact value is non-negative.
+pub fn assert_rounding_ordering_consistent_for_sign(
+    non_negative: bool,
+    rm: RoundingMode,
+    o: Ordering,
+) {
+    match (non_negative, rm) {
+        (_, Floor) | (true, Down) | (false, Up) => assert_ne!(o, Ordering::Greater),
+        (_, Ceiling) | (true, Up) | (false, Down) => assert_ne!(o, Ordering::Less),
+        (_, Exact) => assert_eq!(o, Ordering::Equal),
+        _ => {}
+    }
+}
+
+// The largest exponent magnitude (exclusive) at which property tests cross-check a result against
+// an exact `Rational` computation. A `Float` with a huge exponent converts to a `Rational` with a
+// correspondingly huge numerator or denominator, so without this gate those cross-checks would
+// dominate a test's running time.
+pub const EXPONENT_GATE: i64 = 1 << 16;
+
+// Whether a `Float` is small enough in magnitude, or not finite and nonzero, for an exact
+// `Rational` cross-check to be affordable; see `EXPONENT_GATE`.
+pub fn exponent_in_gate(x: &Float) -> bool {
+    x.get_exponent()
+        .is_none_or(|e| i64::from(e).abs() < EXPONENT_GATE)
+}
+
+pub fn parse_hex_string(s_hex: &str) -> Float {
+    let x = Float::from_string_base(16, s_hex).unwrap();
+    assert_eq!(format!("{:#x}", ComparableFloatRef(&x)), s_hex);
+    x
+}
+
+pub fn to_hex_string(x: &Float) -> String {
+    format!("{:#x}", ComparableFloatRef(x))
+}
+
+pub const ORDERED_FLOAT_STRINGS: [&str; 21] = [
+    "-Infinity",
+    "-3.1415926535897931",
+    "-2.0",
+    "-1.4142135623730951",
+    "-1.0000000000000000000000000000000",
+    "-1.0",
+    "-1.0",
+    "-0.50",
+    "-0.33333333333333331",
+    "-0.0",
+    "NaN",
+    "0.0",
+    "0.33333333333333331",
+    "0.50",
+    "1.0",
+    "1.0",
+    "1.0000000000000000000000000000000",
+    "1.4142135623730951",
+    "2.0",
+    "3.1415926535897931",
+    "Infinity",
+];
+
+pub const ORDERED_FLOAT_HEX_STRINGS: [&str; 21] = [
+    "-Infinity",
+    "-0x3.243f6a8885a30#53",
+    "-0x2.0#1",
+    "-0x1.6a09e667f3bcd#53",
+    "-0x1.0000000000000000000000000#100",
+    "-0x1.0#2",
+    "-0x1.0#1",
+    "-0x0.8#1",
+    "-0x0.55555555555554#53",
+    "-0x0.0",
+    "NaN",
+    "0x0.0",
+    "0x0.55555555555554#53",
+    "0x0.8#1",
+    "0x1.0#1",
+    "0x1.0#2",
+    "0x1.0000000000000000000000000#100",
+    "0x1.6a09e667f3bcd#53",
+    "0x2.0#1",
+    "0x3.243f6a8885a30#53",
+    "Infinity",
+];
+
+pub const ORDERED_F32S: [f32; 17] = [
+    f32::NEGATIVE_INFINITY,
+    -std::f32::consts::PI,
+    -2.0,
+    -std::f32::consts::SQRT_2,
+    -1.0,
+    -0.5,
+    -1.0 / 3.0,
+    -0.0,
+    f32::NAN,
+    0.0,
+    1.0 / 3.0,
+    0.5,
+    1.0,
+    std::f32::consts::SQRT_2,
+    2.0,
+    std::f32::consts::PI,
+    f32::INFINITY,
+];
+
+pub const ORDERED_F64S: [f64; 17] = [
+    f64::NEGATIVE_INFINITY,
+    -std::f64::consts::PI,
+    -2.0,
+    -std::f64::consts::SQRT_2,
+    -1.0,
+    -0.5,
+    -1.0 / 3.0,
+    -0.0,
+    f64::NAN,
+    0.0,
+    1.0 / 3.0,
+    0.5,
+    1.0,
+    std::f64::consts::SQRT_2,
+    2.0,
+    std::f64::consts::PI,
+    f64::INFINITY,
+];
+
+// Tests that rounding with Floor and gradually increasing precision preserves all previous bits.
+pub fn test_constant<F: Fn(u64, RoundingMode) -> (Float, Ordering)>(f: F, limit: u64) {
+    let mut bit_index = Limb::WIDTH - 1;
+    let mut significand = Natural::ZERO;
+    for prec in 1..limit {
+        let x = f(prec, Floor).0;
+        let x_sig = x.significand_ref().unwrap();
+        if *x_sig != significand {
+            significand.set_bit(bit_index);
+            assert_eq!(*x_sig, significand);
+        }
+        if bit_index == 0 {
+            significand <<= Limb::WIDTH;
+            bit_index = Limb::WIDTH - 1;
+        } else {
+            bit_index -= 1;
+        }
+    }
+}
+
+// Computes a function of a `Rational` x with rug, at precision `prec` and with rounding mode `rm`,
+// where `f(rx, c, rm)` assigns the function of the rug input `rx` to `c`, rounded with `rm`, and
+// returns the ternary value. The input is rounded to prec + 128 + `exponent_multiplier` |log_2 |x||
+// bits, which must keep its rounding error well below 2^-prec relative to the result: a large x
+// needs its exponent's worth of extra bits, and a tiny x whose function lies within about x^2
+// (relatively) of 1/x needs twice that many, so that rounding x cannot move 1/x across the gap.
+pub fn rug_rational_fn_prec_round<F: Fn(&rug::Float, &mut rug::Float, Round) -> Ordering>(
+    x: &Rational,
+    prec: u64,
+    rm: Round,
+    exponent_multiplier: u64,
+    f: F,
+) -> (rug::Float, Ordering) {
+    let exponent_bits = if *x == 0u32 {
+        0
+    } else {
+        x.floor_log_base_2_abs().unsigned_abs()
+    };
+    let rx = rug::Float::with_val(
+        u32::exact_from(prec + 128 + exponent_multiplier * exponent_bits),
+        rug::Rational::exact_from(x),
+    );
+    let mut c = rug::Float::with_val(u32::exact_from(prec), 0);
+    let o = f(&rx, &mut c, rm);
+    (c, o)
+}
+
+// Rounds a correctly rounded function value to a primitive float with a single rounding. `f(p)`
+// must return the value correctly rounded to `p` bits with `Nearest`. Rounding first to `p =
+// T::MANTISSA_WIDTH + 64` bits and then to `T` would round twice, which goes wrong when the value
+// lies just short of or just beyond a midpoint of `T`: the wide rounding can land exactly on the
+// midpoint, and the second rounding then breaks the tie its own way. That happens structurally, not
+// just by chance: for example acsch(x) lies just below 1/x, and for x = 2^150/32767 that is a
+// midpoint of two adjacent `f32` subnormals. So `f` is asked instead for the precision the value
+// has in `T`, which is less than `T::MANTISSA_WIDTH + 1` for a subnormal value, and below the
+// smallest positive value the result is decided by comparing with half of it, at increasing
+// precision until the comparison is strict.
+#[allow(clippy::type_repetition_in_bounds)]
+pub fn round_once_to_primitive<T: PrimitiveFloat, F: FnMut(u64) -> Float>(mut f: F) -> T
+where
+    for<'a> T: RoundingFrom<&'a Float>,
+{
+    let approx = f(T::MANTISSA_WIDTH + 64);
+    if !approx.is_normal() {
+        return T::rounding_from(&approx, Nearest).0;
+    }
+    // the value lies in [2^(e-1), 2^e), and the lowest bit available in `T` is 2^MIN_EXPONENT
+    let e = i64::from(approx.get_exponent().unwrap());
+    if e <= T::MIN_EXPONENT {
+        let half = Float::power_of_2(T::MIN_EXPONENT - 1);
+        let mut p = T::MANTISSA_WIDTH + 64;
+        loop {
+            let v = f(p);
+            let v_abs = (&v).abs();
+            if v_abs != half {
+                let t = if v_abs > half {
+                    T::MIN_POSITIVE_SUBNORMAL
+                } else {
+                    T::ZERO
+                };
+                return if v.is_sign_negative() { -t } else { t };
+            }
+            p <<= 1;
+        }
+    }
+    let p = u64::exact_from((e - T::MIN_EXPONENT).min(i64::exact_from(T::MANTISSA_WIDTH + 1)));
+    T::rounding_from(&f(p), Nearest).0
+}
+
+// The tests that compute pi to about 2^30 bits take around 5 GB each, so several of them running at
+// once exhaust memory. Each such test holds this guard for its whole duration, so they run one at a
+// time while the rest of the suite stays parallel.
+static HUGE_PI_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn huge_pi_test_guard() -> MutexGuard<'static, ()> {
+    // A panic in one of these tests poisons the lock, but the lock guards no data, so the remaining
+    // tests can still run
+    HUGE_PI_TEST_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
