@@ -46,4 +46,4 @@ Mithqalite remains free software under the GNU Lesser General Public License, ve
 
 Original Malachite code is copyright © Mikhail Hogrefe and the Malachite contributors. Mithqalite modifications are copyright © Faris Alfarhan and the Mithqalite contributors.
 
-Mithqal is licensed under the GNU GPL version 3.0 or later.
+Mithqal is licensed under the GNU GPL version 3.0 only.
