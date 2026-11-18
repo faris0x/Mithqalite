@@ -1,16 +1,49 @@
-<img width="500" src="https://github.com/mhogrefe/malachite/raw/HEAD/docs/assets/logo-and-name.svg" alt="Logo">
+# Mithqalite
 
-An arbitrary-precision arithmetic library for Rust.
+Mithqalite is an independent fork of [Malachite](https://github.com/mhogrefe/malachite), the arbitrary-precision arithmetic library created by Mikhail Hogrefe. It is the numeric core of [Mithqal](https://github.com/faris0x/Mithqal).
 
-Parts of Malachite are derived from [GMP](https://gmplib.org/),
-[FLINT](https://www.flintlib.org/), and [MPFR](https://www.mpfr.org/).
+Mithqalite does not follow Malachite upstream. It has its own direction, release cadence, and compatibility decisions. Changes made here are not expected to match Malachite, and changes made in Malachite are not expected to be merged here.
 
-The documentation for Malachite is [here](https://docs.rs/malachite/latest/malachite/), and its crate is [here](https://crates.io/crates/malachite).
+## Scope
 
-Floats (arbitrary-precision floating-point numbers) implement all the elementary functions, thoroughly tested and documented; only some special functions, such as the gamma, zeta, and error functions, are still to come.
+Mithqalite owns the numeric internals that Mithqal depends on:
 
-Malachite is developed by Mikhail Hogrefe. Thanks to 43615, b4D8, Romain Billot, Maxim Biryukov, coolreader18, Dasaav-dsv, Duncan Freeman, florian1345, konstin, Rowan Hart, YunWon Jeong, Park Joon-Kyu, Antonio Mamić, OliverNChalk, Kevin Phoenix, probablykasper, shekohex, skycloudd, John Vandenberg, Brandon Weeks, and Will Youmans for additional contributions.
+- Arbitrary-precision integers and rationals.
+- Arbitrary-precision binary floats with correct rounding.
+- Elementary functions, constants, and rounding modes.
+- Internal performance work that requires access to the numeric representation.
 
-<https://malachite.rs/>
+Mithqal owns the engine-facing numeric types, complex arithmetic, hypercomplex types, fixed-point arithmetic, special functions, formatting, and interning.
 
-Copyright © 2026 Mikhail Hogrefe
+## Crates
+
+The repository is a Cargo workspace:
+
+- `malachite` re-exports the public numeric types.
+- `malachite-base` provides shared numeric traits and utilities.
+- `malachite-nz` provides natural and integer arithmetic.
+- `malachite-q` provides rational arithmetic.
+- `malachite-float` provides binary floating-point arithmetic.
+
+The crate names are retained from Malachite for source and dependency compatibility. The project name for this repository is Mithqalite.
+
+## Building and testing
+
+```text
+cargo build --release
+cargo test --release --workspace
+```
+
+The float tests use the `test_build` feature:
+
+```text
+cargo test --release -p malachite-float --features test_build
+```
+
+## License
+
+Mithqalite remains free software under the GNU Lesser General Public License, version 3.0 only. See [COPYING](COPYING) and [COPYING.LESSER](COPYING.LESSER).
+
+Original Malachite code is copyright © Mikhail Hogrefe and the Malachite contributors. Mithqalite modifications are copyright © Faris Alfarhan and the Mithqalite contributors.
+
+Mithqal is licensed under the GNU GPL version 3.0 or later.
