@@ -2024,7 +2024,7 @@ mod baseline;
 mod avx2;
 
 #[cfg(feature = "test_build")]
-pub(crate) use baseline::f64x4_mul_add;
+pub(crate) use baseline::f64x4_mul_add as f64x4_mul_add_baseline;
 
 // Multiplies with the FFT, using the AVX2 kernels when the CPU supports them.
 //

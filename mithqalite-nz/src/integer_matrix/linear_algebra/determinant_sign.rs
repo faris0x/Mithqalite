@@ -6,6 +6,7 @@
 // Lesser General Public License (LGPL) as published by the Free Software Foundation; either version
 // 3 of the License, or (at your option) any later version. See <https://www.gnu.org/licenses/>.
 
+use alloc::vec::Vec;
 use crate::integer::Integer;
 use crate::integer_matrix::IntegerMatrix;
 use crate::integer_matrix::linear_algebra::determinant::determinant_helper;
