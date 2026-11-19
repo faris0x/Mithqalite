@@ -40,6 +40,15 @@ The float tests use the `test_build` feature:
 cargo test --release -p mithqalite-float --features test_build
 ```
 
+The numeric crates also build without the standard library:
+
+```text
+cargo check -p mithqalite-float --lib --no-default-features
+cargo check -p mithqalite --lib --no-default-features --features naturals_and_integers,rationals,floats
+```
+
+These builds use `core` and `alloc`, and the final binary must provide a global allocator.
+
 ## License
 
 Mithqalite remains free software under the GNU Lesser General Public License, version 3.0 only. See [COPYING](COPYING) and [COPYING.LESSER](COPYING.LESSER).
