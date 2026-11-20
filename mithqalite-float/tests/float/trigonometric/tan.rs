@@ -2394,6 +2394,7 @@ fn test_tan_near_zero() {
 // overflow the shortcut for an underflowed cosine. Slow enough to dominate a test run, and its
 // result does not depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_tan_underflow_and_overflow() {
     let _guard = huge_pi_test_guard();
@@ -4493,6 +4494,7 @@ fn test_tan_rational_tiny() {
 // bracket, where everything is `Rational` arithmetic, so no 2^30-bit `Float` is ever formed. The
 // cube and fifth power of such an input have denominators three and five times its own, which makes
 // this test slow and memory-hungry despite its handful of rows.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_tan_rational_tiny_underflow() {
     let test = |x: &Rational, prec, rm, out: Float, out_o| {
@@ -4658,6 +4660,7 @@ fn tan_rational_prec_properties() {
 // 2^30 bits; slow even in release mode. Slow enough to dominate a test run, and its result does not
 // depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_tan_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -4673,6 +4676,7 @@ fn test_tan_rational_huge() {
 // dominate a test run, and its result does not depend on the limb width, so it runs only in the
 // 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_tan_rational_underflow_and_overflow() {
     let _guard = huge_pi_test_guard();

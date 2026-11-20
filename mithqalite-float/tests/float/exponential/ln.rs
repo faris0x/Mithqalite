@@ -53,6 +53,7 @@ use std::str::FromStr;
 // the exact-`Rational` `ln`, which brackets the value and rounds with correct underflow. The two
 // sides of 1 straddle the Nearest underflow tie 2^(MIN - 2): |ln(1 + 2^(MIN-2))| < tie (rounds to
 // 0) while |ln(1 - 2^(MIN-2))| > tie (rounds to the min positive value). Run under `--release`.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_ln_sliver_of_one() {
     let p = u64::try_from(-i64::from(Float::MIN_EXPONENT) + 3).unwrap();

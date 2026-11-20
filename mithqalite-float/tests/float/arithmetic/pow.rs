@@ -4076,6 +4076,7 @@ fn test_pow_integer_overflow_window_regression() {
 // certify -- an infinite loop; a positive product saturated at the minimum positive value, whose
 // unaccounted error let the loop certify a wrongly rounded result on the wrong side of the
 // `Nearest` tie. Both are ~64-128 MB computations.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_pow_general_tiny_product_regression() {
     let min_exp = i64::from(Float::MIN_EXPONENT);

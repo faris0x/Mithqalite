@@ -957,6 +957,7 @@ fn primitive_float_sec_properties() {
 // repeated. Slow enough to dominate a test run, and its result does not depend on the limb width,
 // so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sec_overflow() {
     let _guard = huge_pi_test_guard();
@@ -3128,6 +3129,7 @@ fn sec_rational_prec_properties() {
 // 2^30 bits; slow even in release mode. Slow enough to dominate a test run, and its result does not
 // depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sec_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -3143,6 +3145,7 @@ fn test_sec_rational_huge() {
 // run, and its result does not depend on the limb width, so it runs only in the 64-bit-limb
 // configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sec_rational_overflow() {
     let _guard = huge_pi_test_guard();

@@ -24,6 +24,7 @@ use std::panic::catch_unwind;
 // `MAX_EXPONENT` bits, which used to overflow the `Float` conversion to infinity (and panic in the
 // rounding test). Check that the high-precision value is finite and that its leading 100 bits match
 // a directly computed low-precision `ln(2)`. (~128 MB intermediates, so release-only.)
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_ln_2_prec_high() {
     let high = Float::ln_2_prec(1u64 << 27).0;

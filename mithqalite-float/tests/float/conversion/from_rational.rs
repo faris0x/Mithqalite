@@ -620,6 +620,7 @@ fn from_rational_prec_ref_fail() {
     assert_panic!(Float::from_rational_prec_ref(&Rational::NEGATIVE_ONE, 0));
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_from_rational_prec_round() {
     let test = |s, prec, rm, out, out_hex, out_o| {

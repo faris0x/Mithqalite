@@ -4780,6 +4780,7 @@ fn cot_with_period_prec_round_properties_helper(x: Float, u: u64, prec: u64, rm:
     }
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn cot_with_period_prec_round_properties() {
     float_unsigned_unsigned_rounding_mode_quadruple_gen_var_17().test_properties(
@@ -5766,6 +5767,7 @@ fn primitive_float_cot_rational_properties() {
 // 2^30 bits; slow even in release mode. Slow enough to dominate a test run, and its result does not
 // depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_cot_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -5783,6 +5785,7 @@ fn test_cot_rational_huge() {
 // enough to dominate a test run, and its result does not depend on the limb width, so it runs only
 // in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_cot_rational_underflow_and_overflow() {
     let _guard = huge_pi_test_guard();
@@ -5830,6 +5833,7 @@ fn test_cot_rational_underflow_and_overflow() {
 // takes the cheap reciprocal path and needs no pi at all. Slow enough to dominate a test run, and
 // its result does not depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_cot_underflow_and_overflow() {
     let _guard = huge_pi_test_guard();

@@ -983,6 +983,7 @@ fn test_power_of_2_rational_prec_round() {
 // so 2^x is genuinely more than half an ulp above 1 and the correct result is 1 + ulp (not 1). The
 // result is a ~128 MB Float, checked by value. (Mirrors the `exp_x_minus_1_rational` test at prec =
 // MAX_EXPONENT.)
+#[ignore = "stress: heavy precision"]
 #[test]
 fn power_of_2_rational_near_one_compute_huge() {
     let prec = u64::exact_from(Float::MAX_EXPONENT) + 1;

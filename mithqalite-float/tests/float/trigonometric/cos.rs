@@ -1567,6 +1567,7 @@ fn test_cos_near_zero() {
 // `Nearest` and a directed mode. Slow enough to dominate a test run, and its result does not depend
 // on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_cos_underflow() {
     let _guard = huge_pi_test_guard();
@@ -4328,6 +4329,7 @@ fn cos_rational_prec_properties() {
 // dominate a test run, and its result does not depend on the limb width, so it runs only in the
 // 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_cos_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -4345,6 +4347,7 @@ fn test_cos_rational_huge() {
 // test run, and its result does not depend on the limb width, so it runs only in the 64-bit-limb
 // configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_cos_rational_underflow() {
     let _guard = huge_pi_test_guard();

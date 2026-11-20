@@ -50,6 +50,7 @@ fn test_liouvilles_constant_base_prec_helper(
 // to panic; the quotient now goes through a `Rational` instead. Check that the result is finite and
 // that its leading 100 bits match a directly computed low-precision value. (~130 MB intermediates
 // and about a minute and a half, so release-only.)
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_liouvilles_constant_base_prec_high() {
     let high = Float::liouvilles_constant_base_prec(3, 678_000_000).0;

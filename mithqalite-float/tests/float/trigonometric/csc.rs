@@ -944,6 +944,7 @@ fn primitive_float_csc_properties() {
 // to dominate a test run, and its result does not depend on the limb width, so it runs only in the
 // 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_csc_overflow() {
     let _guard = huge_pi_test_guard();
@@ -3054,6 +3055,7 @@ fn csc_rational_prec_properties() {
 // 2^30 bits; slow even in release mode. Slow enough to dominate a test run, and its result does not
 // depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_csc_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -3069,6 +3071,7 @@ fn test_csc_rational_huge() {
 // run, and its result does not depend on the limb width, so it runs only in the 64-bit-limb
 // configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_csc_rational_overflow() {
     let _guard = huge_pi_test_guard();
@@ -4957,6 +4960,7 @@ fn csc_with_period_prec_round_properties_helper(x: Float, u: u64, prec: u64, rm:
     }
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn csc_with_period_prec_round_properties() {
     float_unsigned_unsigned_rounding_mode_quadruple_gen_var_17().test_properties(

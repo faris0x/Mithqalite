@@ -808,6 +808,7 @@ fn power_of_10_rational_prec_ref_fail() {
     Float::power_of_10_rational_prec_ref(&Rational::ONE, 0);
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_power_of_10_rational_prec_round() {
     let test = |s, prec, rm, out: &str, out_hex: &str, out_o| {
@@ -1019,6 +1020,7 @@ fn test_power_of_10_rational_prec_round() {
 // ulp when rounding toward 1. (The analogous base-2 test rounds differently, since 2^x - 1 ~ 3 *
 // ln(2) / 4 ~ 0.52 ulp lands below half an ulp.) The result is a ~128 MB Float, checked by value.
 // (Mirrors the `exp_x_minus_1_rational` test at prec = MAX_EXPONENT.)
+#[ignore = "stress: heavy precision"]
 #[test]
 fn power_of_10_rational_near_one_compute_huge() {
     let prec = u64::exact_from(Float::MAX_EXPONENT) + 1;

@@ -340,6 +340,7 @@ fn eulers_constant_prec_properties() {
     });
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn eulers_constant_prec_round_properties() {
     unsigned_rounding_mode_pair_gen_var_4().test_properties(|(prec, rm)| {

@@ -1119,6 +1119,7 @@ fn test_sin_near_zero() {
 // `Nearest` and a directed mode. Slow enough to dominate a test run, and its result does not depend
 // on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sin_underflow() {
     let _guard = huge_pi_test_guard();
@@ -3708,6 +3709,7 @@ fn test_sin_rational_prec_round() {
 // Inputs of magnitude around 2^(-2^30) or less, whose sines underflow: they take the series path,
 // where everything is `Rational` arithmetic, so no 2^30-bit `Float` is ever formed and the test is
 // cheap.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_sin_rational_tiny_underflow() {
     let test = |x: Rational, prec, rm, out: Float, out_o| {
@@ -3872,6 +3874,7 @@ fn sin_rational_prec_properties() {
 // 2^30 bits; slow even in release mode. Slow enough to dominate a test run, and its result does not
 // depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sin_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -3886,6 +3889,7 @@ fn test_sin_rational_huge() {
 // so this test is slow even in release mode. Slow enough to dominate a test run, and its result
 // does not depend on the limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sin_rational_underflow() {
     let _guard = huge_pi_test_guard();

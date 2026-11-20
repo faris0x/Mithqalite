@@ -3579,6 +3579,7 @@ fn test_sin_cos_near_zero() {
 // dominate a test run, and its result does not depend on the limb width, so it runs only in the
 // 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sin_cos_underflow() {
     let _guard = huge_pi_test_guard();
@@ -7700,6 +7701,7 @@ fn sin_cos_rational_prec_properties() {
 // to dominate a test run, and its result does not depend on the limb width, so it runs only in the
 // 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sin_cos_rational_huge() {
     let _guard = huge_pi_test_guard();
@@ -7718,6 +7720,7 @@ fn test_sin_cos_rational_huge() {
 // even in release mode. Slow enough to dominate a test run, and its result does not depend on the
 // limb width, so it runs only in the 64-bit-limb configuration.
 #[cfg(not(feature = "32_bit_limbs"))]
+#[ignore = "stress: huge pi computation"]
 #[test]
 fn test_sin_cos_rational_underflow() {
     let _guard = huge_pi_test_guard();

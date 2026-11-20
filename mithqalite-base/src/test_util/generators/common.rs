@@ -15,6 +15,19 @@ pub const TINY_LIMIT: usize = 1000;
 pub const SMALL_LIMIT: usize = 1000;
 pub const LARGE_LIMIT: usize = 10000;
 
+/// Cases per generator in a normal test run.
+///
+/// The stress run overrides this with `MITHQALITE_TEST_CASES`.
+pub const GATE_LIMIT: usize = 256;
+
+pub fn property_limit() -> usize {
+    std::env::var("MITHQALITE_TEST_CASES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(GATE_LIMIT)
+}
+
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum GenMode {
     Exhaustive,
@@ -134,7 +147,7 @@ impl<T> Generator<T> {
         self.test_properties_with_config_with_limit_and_optional_exhaustive_limit(
             config,
             test,
-            LARGE_LIMIT,
+            property_limit(),
             exhaustive_limit,
         );
     }

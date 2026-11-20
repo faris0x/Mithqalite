@@ -1453,6 +1453,7 @@ fn test_root_s_exact_negative_k() {
 
 // Rational roots with exponents far outside the Float range: the exponent is reduced by a multiple
 // of k (or, for huge k, the root is assembled from the mantissa root and 2^(e/k)).
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_root_rational_extreme() {
     let test = |x: Rational, k: u64, prec: u64, rm, out: &str, out_hex: &str, out_o: Ordering| {

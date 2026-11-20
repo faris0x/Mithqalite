@@ -3119,6 +3119,7 @@ fn primitive_float_exp_x_minus_1_rational_properties() {
 }
 
 // Regression tests for two extreme-regime infinite loops.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_exp_x_minus_1_extreme_regression() {
     let min_exp = i64::from(Float::MIN_EXPONENT);

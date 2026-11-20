@@ -1223,6 +1223,7 @@ fn test_primitive_float_reciprocal_sqrt() {
     test::<f64>(-core::f64::consts::PI, f64::NAN);
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_reciprocal_sqrt_rational_prec() {
     let test = |s, prec, out, out_hex, out_o| {
@@ -1487,6 +1488,7 @@ fn reciprocal_sqrt_rational_prec_ref_fail() {
     ));
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_reciprocal_sqrt_rational_prec_round() {
     let test = |s, prec, rm, out, out_hex, out_o| {

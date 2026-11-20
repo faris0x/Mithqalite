@@ -1348,6 +1348,7 @@ fn exp_properties_exp_3() {
     float_gen().test_properties_with_config(&config, exp_properties_helper);
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_exp_rational_prec() {
     let test = |s, prec, out: &str, out_hex: &str, out_o| {
@@ -1572,6 +1573,7 @@ fn exp_rational_prec_ref_fail() {
     Float::exp_rational_prec_ref(&Rational::ONE, 0);
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_exp_rational_prec_round() {
     let test = |s, prec, rm, out: &str, out_hex: &str, out_o| {

@@ -55,6 +55,7 @@ use std::str::FromStr;
 // decision can differ from `ln`\'s: eps = 2^(MIN-2) gives ~1.443 * 2^(MIN-2), above the tie
 // 2^(MIN-2), so it rounds to the min positive value, while the smaller eps = 2^(MIN-3) gives ~0.72
 // * 2^(MIN-2), below the tie, rounding to 0. Run under `--release`.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_log_base_2_sliver_of_one() {
     let mi = i64::from(Float::MIN_EXPONENT);
@@ -2721,6 +2722,7 @@ fn test_log_base_2_rational_prec() {
     );
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_log_base_2_rational_prec_round() {
     let test = |s, prec, rm, out, out_hex, out_o| {

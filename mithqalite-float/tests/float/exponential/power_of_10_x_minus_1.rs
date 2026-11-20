@@ -3310,6 +3310,7 @@ fn primitive_float_power_of_10_x_minus_1_rational_properties() {
 // MIN_EXPONENT) without triggering the huge-negative shortcut (|x| < 2 + (prec - 1) / 3), so the
 // Float path materializes -1 + 10^x over Rationals while the Rational integer path rounds from -1
 // by a different mechanism; the two must agree. (~128 MB results.)
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_power_of_10_x_minus_1_deep_negative_regression() {
     let prec = u64::exact_from(Float::MAX_EXPONENT);

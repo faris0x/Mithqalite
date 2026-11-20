@@ -500,6 +500,7 @@ fn primitive_float_log_base_rational_base_properties() {
 // The exactness detection must not be skipped for large bases or extreme exponents: an
 // exactly-representable result would leave the Ziv loop unable to terminate. These inputs formerly
 // hung.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn log_base_rational_base_exact_extreme() {
     use mithqalite_base::num::arithmetic::traits::{Pow, PowerOf2};

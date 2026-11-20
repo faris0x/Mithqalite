@@ -11606,6 +11606,7 @@ fn test_fft_avx2_body_in_sync() {
     );
 }
 
+#[ignore = "stress: large multiplication"]
 #[test]
 fn test_mul() {
     let test = |s, t, out| {

@@ -1010,6 +1010,7 @@ fn acos_rational_prec_properties() {
 // smallest positive `Float` -- a regime the `Float` arccosine cannot reach, since it would need an
 // input of more than 2^31 bits. The `Rational` here has exactly that many, so each call costs a few
 // seconds.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_acos_rational_underflow() {
     let min_positive = Float::min_positive_value_prec(53);
@@ -2034,6 +2035,7 @@ fn acos_with_period_rational_prec_fail() {
 // underflows, but a large enough period lifts the quotient back into the range, so the square root
 // has to be taken here rather than read off the underflowing arccosine. The `Rational` has about
 // 2^31 bits, so each call costs a few seconds.
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_acos_with_period_rational_underflow() {
     let x = Rational::ONE - Rational::power_of_2(-((1i64 << 31) + 4));

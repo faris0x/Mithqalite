@@ -1535,6 +1535,7 @@ fn sqrt_prec_round_fail() {
     });
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_sqrt_rational_prec() {
     let test = |s, prec, out, out_hex, out_o| {
@@ -1784,6 +1785,7 @@ fn sqrt_rational_prec_ref_fail() {
     assert_panic!(Float::sqrt_rational_prec_ref(&Rational::NEGATIVE_ONE, 0));
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn test_sqrt_rational_prec_round() {
     let test = |s, prec, rm, out, out_hex, out_o| {

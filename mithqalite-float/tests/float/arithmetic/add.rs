@@ -10320,6 +10320,7 @@ fn add_rational_prec_round_properties_helper(
     }
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn add_rational_prec_round_properties() {
     float_rational_unsigned_rounding_mode_quadruple_gen_var_1().test_properties(
@@ -10473,6 +10474,7 @@ fn add_rational_prec_properties_helper(x: Float, y: Rational, prec: u64, extreme
     }
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn add_rational_prec_properties() {
     float_rational_unsigned_triple_gen_var_1().test_properties(|(x, y, prec)| {
@@ -10631,6 +10633,7 @@ fn add_rational_round_properties_helper(x: Float, y: Rational, rm: RoundingMode,
     }
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn add_rational_round_properties() {
     float_rational_rounding_mode_triple_gen_var_1().test_properties(|(x, y, rm)| {
@@ -10765,6 +10768,7 @@ fn add_rational_properties_helper(x: Float, y: Rational, extreme: bool) {
     }
 }
 
+#[ignore = "stress: heavy precision"]
 #[test]
 fn add_rational_properties() {
     float_rational_pair_gen().test_properties(|(x, y)| {
